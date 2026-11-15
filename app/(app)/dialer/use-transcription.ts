@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Call } from '@twilio/voice-sdk';
 import { createDownsampler, floatToPcm16 } from '@/lib/audio/pcm16';
 import { buildOwnerTurn, type OwnerTurn, type Segment } from '@/lib/transcript';
+import { createOutbox } from '@/lib/transcript-outbox';
 
 export type { OwnerTurn, Segment };
 export type TranscriptionStatus = 'idle' | 'live' | 'paused';
@@ -12,12 +13,10 @@ const LISTEN_URL =
   'wss://api.deepgram.com/v1/listen?model=nova-3&encoding=linear16&sample_rate=16000&channels=1' +
   '&interim_results=true&utterance_end_ms=1000&vad_events=true&smart_format=true';
 const FLUSH_MS = 2000;
-const BATCH_MAX = 100;
 const CLOSE_WAIT_MS = 1500;
 
 type Speaker = 'rep' | 'owner';
 type ChannelState = 'connecting' | 'open' | 'paused';
-type Pending = { speaker: Speaker; text: string; tStart: number; tEnd: number };
 
 async function fetchToken(): Promise<string> {
   const res = await fetch('/api/deepgram/token', { method: 'POST', cache: 'no-store' });
@@ -51,12 +50,29 @@ export function useTranscription(call: Call | null, callId: string | null = null
     const acceptedAt = performance.now();
     const finals: Segment[] = [];
     const interim: Partial<Record<Speaker, Segment>> = {};
-    const outbox: Pending[] = [];
+    const outbox = createOutbox(async (id, batch) => {
+      try {
+        const res = await fetch(`/api/calls/${id}/segments`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ segments: batch }),
+          keepalive: true,
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    });
+    // The session is bound to its own call id: the last one seen while open, frozen at cleanup.
+    let boundId: string | null = null;
+    const sessionCallId = () => {
+      if (!closed && callIdRef.current) boundId = callIdRef.current;
+      return boundId;
+    };
     const channelState: Partial<Record<Speaker, ChannelState>> = {};
     const sockets = new Set<WebSocket>();
     let turnId = 0;
     let ctx: AudioContext | null = null;
-    let flushing = false;
 
     const publish = () => setSegments([...finals, ...Object.values(interim).filter((s): s is Segment => !!s)]);
 
@@ -66,26 +82,7 @@ export function useTranscription(call: Call | null, callId: string | null = null
       else if (states.includes('open')) setStatus('live');
     };
 
-    const flush = async () => {
-      const id = callIdRef.current;
-      if (flushing || !id || outbox.length === 0) return;
-      flushing = true;
-      const batch = outbox.splice(0, BATCH_MAX);
-      try {
-        const res = await fetch(`/api/calls/${id}/segments`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ segments: batch }),
-          keepalive: true,
-        });
-        if (!res.ok) throw new Error('segments save failed');
-      } catch {
-        outbox.unshift(...batch); // retried in the next batch
-      } finally {
-        flushing = false;
-      }
-    };
-    const flushTimer = setInterval(() => void flush(), FLUSH_MS);
+    const flushTimer = setInterval(() => void outbox.flush(sessionCallId()), FLUSH_MS);
 
     const handleResult = (speaker: Speaker, offset: number, msg: unknown) => {
       const m = msg as {
@@ -101,20 +98,23 @@ export function useTranscription(call: Call | null, callId: string | null = null
       const tStart = offset + (m.start ?? 0);
       const tEnd = tStart + (m.duration ?? 0);
       if (!text) {
-        if (interim[speaker]) {
+        if (!closed && interim[speaker]) {
           delete interim[speaker];
           publish();
         }
         return;
       }
       if (!m.is_final) {
+        if (closed) return;
         interim[speaker] = { speaker, text, tStart, tEnd, final: false };
         publish();
         return;
       }
+      outbox.push({ speaker, text: text.slice(0, 2000), tStart, tEnd });
+      // After the call ends, late finals are still saved to this call but never shown or coached on.
+      if (closed) return;
       delete interim[speaker];
       finals.push({ speaker, text, tStart, tEnd, final: true });
-      outbox.push({ speaker, text: text.slice(0, 2000), tStart, tEnd });
       publish();
       if (speaker === 'owner' && m.speech_final) {
         try {
@@ -199,6 +199,7 @@ export function useTranscription(call: Call | null, callId: string | null = null
     })();
 
     return () => {
+      const finalId = sessionCallId();
       closed = true;
       clearInterval(flushTimer);
       const audioCtx = ctx;
@@ -215,7 +216,7 @@ export function useTranscription(call: Call | null, callId: string | null = null
       setTimeout(() => {
         for (const ws of sockets) ws.close();
         sockets.clear();
-        void flush();
+        void outbox.drain(finalId);
       }, CLOSE_WAIT_MS);
     };
   }, [call]);
