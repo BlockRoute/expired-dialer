@@ -16,3 +16,11 @@ export async function requireUser(): Promise<User> {
   if (error || !data.user || !isAllowedEmail(data.user.email)) redirect('/login');
   return data.user;
 }
+
+/** For API routes: throws Error('UNAUTHENTICATED') (mapped to 401 by withApiErrors) instead of redirecting. */
+export async function requireUserApi(): Promise<User> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user || !isAllowedEmail(data.user.email)) throw new Error('UNAUTHENTICATED');
+  return data.user;
+}

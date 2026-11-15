@@ -17,6 +17,9 @@ Single-user expired-listing cold-calling app (Next.js 16, Supabase, Twilio Voice
 
    Use the same address for `ALLOWED_EMAIL`. In Supabase Auth settings add
    `${APP_URL}/auth/callback` to the redirect URLs.
+   Also **disable new signups** (Supabase Dashboard > Authentication > Providers > Email /
+   Sign In / Providers > turn off "Allow new users to sign up"). The login form already
+   passes `shouldCreateUser: false`, but the server setting is the real guard.
 5. `pnpm dev`, open `/login`, request a sign-in link.
 
 Commands: `pnpm test` (Vitest), `pnpm build`, `pnpm lint`.
