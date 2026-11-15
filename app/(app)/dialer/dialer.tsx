@@ -17,6 +17,7 @@ import { checkDial, type BlockReason } from '@/lib/guardrails';
 import { outcomeLabel, PRIMARY_OUTCOMES } from '@/lib/outcomes';
 import type { ImportBatchRow, SettingsRow } from '@/lib/db/types';
 import { closeRound, lookupCallId, saveOutcome } from './actions';
+import { dncAppliesToCall } from '@/lib/coach/panel-state';
 import { CoachPanel } from './coach-panel';
 import { useTranscription } from './use-transcription';
 
@@ -80,7 +81,7 @@ export function Dialer(props: {
     flowCallIdRef.current = flow.callId;
   });
   const onDncRequest = useCallback((cid: string) => {
-    if (cid === flowCallIdRef.current) setDncFor(cid);
+    if (dncAppliesToCall(cid, flowCallIdRef.current)) setDncFor(cid);
   }, []);
   /** True while a save, voicemail drop or round close is running; a ref so a fast second keypress sees it before any re-render. */
   const busyRef = useRef(false);

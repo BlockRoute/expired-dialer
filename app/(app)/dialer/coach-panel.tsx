@@ -24,6 +24,7 @@ export function CoachPanel(props: {
   const [acted, setActed] = useState<CoachAction | null>(null);
   const [paused, setPaused] = useState(false);
   const latest = useRef(-1);
+  const mounted = useRef(true);
   const ids = useRef({ callId, leadId });
   const dncRef = useRef(onDncRequest);
   useEffect(() => {
@@ -32,6 +33,7 @@ export function CoachPanel(props: {
   });
 
   useEffect(() => {
+    mounted.current = true;
     onOwnerTurn((turn) => {
       const { callId: cid, leadId: lid } = ids.current;
       if (!cid) return;
@@ -57,6 +59,7 @@ export function CoachPanel(props: {
           response: body,
         });
         if (reportDnc) dncRef.current(cid);
+        if (!mounted.current) return;
         if (view.kind === 'paused') {
           setPaused(true);
           setResponse(null);
@@ -68,7 +71,7 @@ export function CoachPanel(props: {
       })();
     });
     return () => {
-      ids.current = { callId: null, leadId: ids.current.leadId };
+      mounted.current = false; // late responses still report DNC for their call, but render nothing
       onOwnerTurn(() => {});
     };
   }, [onOwnerTurn]);

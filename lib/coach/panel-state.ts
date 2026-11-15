@@ -13,6 +13,10 @@ export type PanelView =
 
 export const DNC_THRESHOLD = 0.5;
 
+/** The dialer applies a reported DNC only while the request's call is still its current call (in call or ended). */
+export const dncAppliesToCall = (requestCallId: string, dialerCallId: string | null) =>
+  dialerCallId !== null && requestCallId === dialerCallId;
+
 /**
  * Decides what a coach response (or a failed request: response null) does.
  * DNC applies on every response for the current call, stale or not; only the
