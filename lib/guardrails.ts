@@ -10,7 +10,10 @@ const HARD_OPEN_S = 8 * 3600;
 const HARD_CLOSE_S = 21 * 3600;
 const MAX_SCRUB_AGE_DAYS = 90;
 
-const toSeconds = (hhmm: string) => {
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** Seconds since midnight, or NaN for anything that is not a strict HH:MM. */
+const toSeconds = (hhmm: unknown) => {
+  if (typeof hhmm !== 'string' || !HHMM.test(hhmm)) return NaN;
   const [h, m] = hhmm.split(':').map(Number);
   return h * 3600 + m * 60;
 };
@@ -34,20 +37,27 @@ export function checkDial(input: {
   if (internalDnc) return block('internal_dnc');
   if (phone.vendor_dnc === 'do_not_call') return block('vendor_dnc');
   if (!batch || (phone.vendor_dnc === 'unknown' && !batch.scrubbed_by_vendor)) return block('unscrubbed');
-  if (dayNumber(east.date) - dayNumber(batch.scrub_date) > MAX_SCRUB_AGE_DAYS) return block('scrub_stale');
+  // Negated <= so an unparseable scrub_date (NaN) fails closed.
+  if (!(dayNumber(east.date) - dayNumber(batch.scrub_date) <= MAX_SCRUB_AGE_DAYS)) return block('scrub_stale');
   if (lead.status === 'out_of_state') return block('out_of_state');
   if (lead.status === 'dnc' || lead.status === 'dead' || lead.status === 'appointment') return block('lead_closed');
   if (phone.status !== 'ok') return block('phone_dead');
-  if (lead.attempt_rounds >= settings.max_rounds) return block('max_rounds');
-  if (lead.next_eligible_at && new Date(lead.next_eligible_at).getTime() > now.getTime()) return block('cooldown');
+  if (!(lead.attempt_rounds < settings.max_rounds)) return block('max_rounds');
+  if (lead.next_eligible_at != null && !(new Date(lead.next_eligible_at).getTime() <= now.getTime())) return block('cooldown');
 
-  const window = settings.hours[DAYS[east.weekday]];
-  if (!window) return block('outside_hours');
   // Eastern offsets are whole minutes, so UTC seconds equal Eastern seconds.
   const nowS = east.minutes * 60 + now.getUTCSeconds();
-  const open = Math.max(toSeconds(window[0]), HARD_OPEN_S);
-  const lastStart = Math.min(toSeconds(window[1]), HARD_CLOSE_S) - settings.ring_timeout_s;
-  if (nowS < open || nowS > lastStart) return block('outside_hours');
+  const ring = settings.ring_timeout_s;
+  if (typeof ring !== 'number' || !Number.isFinite(ring) || ring < 0) return block('outside_hours');
+  // Hard bound first, independent of whatever is stored in settings.hours.
+  if (nowS < HARD_OPEN_S || nowS > HARD_CLOSE_S - ring) return block('outside_hours');
+
+  const window = settings.hours?.[DAYS[east.weekday]];
+  if (!Array.isArray(window)) return block('outside_hours');
+  const open = toSeconds(window[0]);
+  const close = toSeconds(window[1]);
+  if (!Number.isFinite(open) || !Number.isFinite(close)) return block('outside_hours');
+  if (nowS < open || nowS > close - ring) return block('outside_hours');
 
   return { ok: true };
 }

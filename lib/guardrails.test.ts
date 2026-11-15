@@ -78,6 +78,30 @@ describe.each(['UTC', 'America/Los_Angeles', 'America/New_York'])('checkDial hou
   it('before window start blocks', () => expect(run('2026-11-16', '08:59:59')).toEqual({ ok: false, reason: 'outside_hours' }));
 });
 
+describe('checkDial fails closed on malformed input', () => {
+  const hrs = (w: unknown) => settings({ hours: win(w as never) });
+  it('garbage hours strings cannot bypass the hard bound', () => {
+    for (const w of [['x', 'y'], ['', ''], ['09:00', '9pm'], ['25:00', '99:99']]) {
+      expect(checkDial({ ...base, settings: hrs(w), now: et('2026-11-16', '03:00:00') })).toEqual({ ok: false, reason: 'outside_hours' });
+      expect(checkDial({ ...base, settings: hrs(w), now: et('2026-11-16', '21:30:00') })).toEqual({ ok: false, reason: 'outside_hours' });
+      expect(checkDial({ ...base, settings: hrs(w), now: et('2026-11-16', '12:00:00') })).toEqual({ ok: false, reason: 'outside_hours' });
+    }
+  });
+  it('negative or non-finite ring_timeout_s blocks', () => {
+    for (const r of [-3600, NaN, undefined, Infinity])
+      expect(checkDial({ ...base, settings: settings({ ring_timeout_s: r as never }), now: et('2026-11-16', '21:30:00') })).toEqual({ ok: false, reason: 'outside_hours' });
+    expect(checkDial({ ...base, settings: settings({ ring_timeout_s: -3600 }) })).toEqual({ ok: false, reason: 'outside_hours' });
+  });
+  it('unparseable scrub_date -> scrub_stale', () =>
+    expect(checkDial({ ...base, batch: batch({ scrub_date: 'garbage' }) })).toEqual({ ok: false, reason: 'scrub_stale' }));
+  it('unparseable next_eligible_at -> cooldown', () =>
+    expect(checkDial({ ...base, lead: lead({ next_eligible_at: 'nope' }) })).toEqual({ ok: false, reason: 'cooldown' }));
+  it('non-finite attempt_rounds or max_rounds -> max_rounds', () => {
+    expect(checkDial({ ...base, lead: lead({ attempt_rounds: NaN }) })).toEqual({ ok: false, reason: 'max_rounds' });
+    expect(checkDial({ ...base, settings: settings({ max_rounds: NaN }) })).toEqual({ ok: false, reason: 'max_rounds' });
+  });
+});
+
 describe('afterRound', () => {
   it('increments and schedules gap', () => {
     const r = afterRound(lead({ attempt_rounds: 0 }), settings(), NOW);
