@@ -59,7 +59,6 @@ create table public.leads (
   attempt_rounds int not null default 0,
   next_eligible_at timestamptz,
   normalized_address text unique,
-  state text,          -- normalized property state, used for the out_of_state gate
   mailing_state text,
   owner_full_name text,
   owner_first_name text,
