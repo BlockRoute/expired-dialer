@@ -8,6 +8,7 @@ import {
   canSaveOutcome,
   canSkip,
   currentLead,
+  needsRoundClose,
   currentPhone,
   flowReducer,
   initialFlow,
@@ -16,7 +17,7 @@ import {
 import { checkDial, type BlockReason } from '@/lib/guardrails';
 import { outcomeLabel, PRIMARY_OUTCOMES } from '@/lib/outcomes';
 import type { ImportBatchRow, SettingsRow } from '@/lib/db/types';
-import { lookupCallId, saveOutcome } from './actions';
+import { closeRound, lookupCallId, saveOutcome } from './actions';
 
 type DeviceStatus = 'loading' | 'ready' | 'error';
 
@@ -66,6 +67,8 @@ export function Dialer(props: {
 
   const deviceRef = useRef<Device | null>(null);
   const callRef = useRef<Call | null>(null);
+  /** True while a save, voicemail drop or round close is running; a ref so a fast second keypress sees it before any re-render. */
+  const busyRef = useRef(false);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30_000);
@@ -172,70 +175,102 @@ export function Dialer(props: {
 
   const hangUp = useCallback(() => callRef.current?.disconnect(), []);
 
-  const submit = useCallback(
-    async (outcome: string) => {
-      if (!canSaveOutcome(flow) || !flow.callId || pending) return;
+  /** Runs `task` unless another save/skip is already in flight. */
+  const exclusive = useCallback(async (task: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setPending(true);
+    try {
+      await task();
+    } finally {
+      busyRef.current = false;
+      setPending(false);
+    }
+  }, []);
+
+  const persist = useCallback(
+    async (outcome: string): Promise<boolean> => {
+      if (!canSaveOutcome(flow) || !flow.callId) return false;
       let callbackIso: string | undefined;
       if (outcome === 'callback_requested') {
         const when = callbackAt ? new Date(callbackAt) : null;
         if (!when || Number.isNaN(when.getTime())) {
           setMessage('Pick a callback time first.');
-          return;
+          return false;
         }
         callbackIso = when.toISOString();
       }
-      setPending(true);
       setMessage(null);
       callRef.current?.disconnect();
       try {
+        // Saving is idempotent per call, so a retry after a lost response is safe.
         const result = await saveOutcome(flow.callId, outcome, note, callbackIso);
-        if (result.ok) {
-          callRef.current = null;
-          dispatch({ type: 'saved', advance: result.advance });
-          setNote('');
-          setCallbackAt('');
-        } else {
+        if (!result.ok) {
           setMessage(result.error);
+          return false;
         }
+        callRef.current = null;
+        dispatch({ type: 'saved', advance: result.advance });
+        setNote('');
+        setCallbackAt('');
+        return true;
       } catch {
-        setMessage('Could not save the outcome. Try again.');
-      } finally {
-        setPending(false);
+        setMessage('Could not save the outcome. Press it again to retry.');
+        return false;
       }
     },
-    [flow, pending, note, callbackAt],
+    [flow, note, callbackAt],
   );
 
-  const dropVoicemail = useCallback(async () => {
-    if (!flow.callId || !dropId || pending) return;
-    setPending(true);
-    setMessage(null);
-    try {
-      const res = await fetch('/api/twilio/vm-drop', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ callId: flow.callId, dropId }),
-      });
-      const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!res.ok || !body?.ok) {
-        setMessage(body?.error ?? 'Voicemail drop failed.');
-        return;
-      }
-    } catch {
-      setMessage('Voicemail drop failed.');
-      return;
-    } finally {
-      setPending(false);
-    }
-    await submit('left_vm');
-  }, [flow.callId, dropId, pending, submit]);
+  const submit = useCallback((outcome: string) => exclusive(async () => void (await persist(outcome))), [exclusive, persist]);
 
-  const skip = useCallback(() => {
-    if (canSkip(flow)) {
-      setMessage(null);
-      dispatch({ type: 'skip' });
-    }
-  }, [flow]);
+  const dropVoicemail = useCallback(
+    () =>
+      exclusive(async () => {
+        if (!flow.callId || !dropId) return;
+        setMessage(null);
+        try {
+          const res = await fetch('/api/twilio/vm-drop', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ callId: flow.callId, dropId }),
+          });
+          const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !body?.ok) {
+            setMessage(body?.error ?? 'Voicemail drop failed.');
+            return;
+          }
+        } catch {
+          setMessage('Voicemail drop failed.');
+          return;
+        }
+        await persist('left_vm');
+      }),
+    [exclusive, flow.callId, dropId, persist],
+  );
+
+  const skip = useCallback(
+    () =>
+      exclusive(async () => {
+        if (!canSkip(flow)) return;
+        setMessage(null);
+        const lead = currentLead(flow);
+        if (lead && needsRoundClose(flow)) {
+          try {
+            const result = await closeRound(lead.lead.id);
+            if (!result.ok) {
+              setMessage(result.error ?? 'Could not close the round. Try again.');
+              return;
+            }
+          } catch {
+            setMessage('Could not close the round. Try again.');
+            return;
+          }
+        }
+        dispatch({ type: 'skip' });
+      }),
+    [exclusive, flow],
+  );
 
   const submitRef = useRef(submit);
   const skipRef = useRef(skip);
@@ -428,7 +463,7 @@ export function Dialer(props: {
                 </button>
               </div>
             )}
-            <button type="button" className={btn} disabled={!canSkip(flow)} onClick={skip}>
+            <button type="button" className={btn} disabled={!canSkip(flow)} onClick={() => void skip()}>
               Next lead <kbd className="ml-1 text-xs text-neutral-500">N</kbd>
             </button>
           </div>

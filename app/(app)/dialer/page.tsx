@@ -1,4 +1,4 @@
-import { dialablePhones, type FlowLead } from '@/lib/dialer/flow';
+import { callablePhones, type FlowLead } from '@/lib/dialer/flow';
 import { orderQueue } from '@/lib/queue';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { CallbackRow, ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '@/lib/db/types';
@@ -32,17 +32,20 @@ export default async function DialerPage() {
     phonesByLead.set(lead.id, phones ?? []);
     return { ...lead, dueCallbackAt: earliestDue.get(lead.id) ?? null };
   });
-  const queue: FlowLead[] = orderQueue(candidates, new Date()).map((lead) => ({
-    lead,
-    phones: dialablePhones(phonesByLead.get(lead.id) ?? []),
-  }));
+  const batches = (batchesRes.data ?? []) as ImportBatchRow[];
+  const dncNumbers = ((dncRes.data ?? []) as { number: string }[]).map((d) => d.number);
+  const ctx = { batches, dncNumbers, settings, now: new Date() };
+  // Leads with no phone the guardrails would allow are not offered at all.
+  const queue: FlowLead[] = orderQueue(candidates, ctx.now)
+    .map((lead) => ({ lead, phones: callablePhones(lead, phonesByLead.get(lead.id) ?? [], ctx) }))
+    .filter((entry) => entry.phones.length > 0);
 
   return (
     <Dialer
       queue={queue}
       settings={settings}
-      batches={(batchesRes.data ?? []) as ImportBatchRow[]}
-      dncNumbers={((dncRes.data ?? []) as { number: string }[]).map((d) => d.number)}
+      batches={batches}
+      dncNumbers={dncNumbers}
     />
   );
 }

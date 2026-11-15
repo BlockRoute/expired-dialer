@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applyOutcome } from '../outcomes';
-import { currentLead, currentPhone, dialablePhones, flowReducer, initialFlow, canDial, canSaveOutcome, canSkip, type FlowAction, type FlowLead, type FlowState } from './flow';
-import type { LeadRow, PhoneRow, SettingsRow } from '../db/types';
+import { callablePhones, hasNextCallablePhone, needsRoundClose, currentLead, currentPhone, dialablePhones, flowReducer, initialFlow, canDial, canSaveOutcome, canSkip, type FlowAction, type FlowLead, type FlowState } from './flow';
+import type { ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '../db/types';
 
 const NOW = new Date('2026-11-16T17:00:00Z');
 const settings = { max_rounds: 3, round_gap_hours: 24 } as SettingsRow;
@@ -125,5 +125,58 @@ describe('flowReducer', () => {
   it('saved without a call id is ignored', () => {
     const s = run(initialFlow, { type: 'load', queue: queue() });
     expect(run(s, { type: 'saved', advance: 'next_lead' })).toEqual(s);
+  });
+});
+
+describe('callable phones (phone-level guardrails)', () => {
+  const batch = { id: 'B', scrubbed_by_vendor: true, scrub_date: '2026-11-16' } as ImportBatchRow;
+  const ctx = (dnc: string[] = []) => ({ batches: [batch], dncNumbers: dnc, settings, now: NOW });
+  const ph = (id: string, position: number, o: Partial<PhoneRow> = {}) =>
+    mkPhone(id, 'L1', position, { batch_id: 'B', vendor_dnc: 'callable', ...o });
+  const lead = mkLead('L1');
+
+  it('drops vendor-flagged, internal-DNC and unscrubbed phones', () => {
+    const phones = [
+      ph('a', 1),
+      ph('b', 2, { vendor_dnc: 'do_not_call' }),
+      ph('c', 3, { number: '+18045559999' }),
+      ph('d', 4, { vendor_dnc: 'unknown', batch_id: null }),
+      ph('e', 5),
+    ];
+    expect(callablePhones(lead, phones, ctx(['+18045559999'])).map((p) => p.id)).toEqual(['a', 'e']);
+  });
+
+  it('phone 2 vendor-flagged: phone 1 is the last callable phone, so no_answer closes the round', () => {
+    const phones = [ph('a', 1), ph('b', 2, { vendor_dnc: 'do_not_call' })];
+    expect(hasNextCallablePhone(lead, phones, 'a', ctx())).toBe(false);
+    const r = applyOutcome({
+      outcome: 'no_answer', lead, phone: phones[0], hasNextPhone: hasNextCallablePhone(lead, phones, 'a', ctx()), settings, now: NOW,
+    });
+    expect(r.advance).toBe('next_lead');
+    expect(r.lead.attempt_rounds).toBe(1);
+  });
+
+  it('a callable phone after the current one counts; earlier ones and unknown ids do not', () => {
+    const phones = [ph('a', 1), ph('b', 2)];
+    expect(hasNextCallablePhone(lead, phones, 'a', ctx())).toBe(true);
+    expect(hasNextCallablePhone(lead, phones, 'b', ctx())).toBe(false);
+    expect(hasNextCallablePhone(lead, phones, 'zzz', ctx())).toBe(false);
+  });
+
+  it('the hours window does not make a phone uncallable', () => {
+    const closed = { ...ctx(), now: new Date('2026-11-16T03:00:00Z') };
+    expect(callablePhones(lead, [ph('a', 1)], closed)).toHaveLength(1);
+  });
+});
+
+describe('needsRoundClose', () => {
+  it('is true only when idle on a later phone, i.e. after a next_phone outcome', () => {
+    const q = [entry('L1', [mkPhone('P1', 'L1', 1), mkPhone('P2', 'L1', 2)])];
+    let s = run(initialFlow, { type: 'load', queue: q });
+    expect(needsRoundClose(s)).toBe(false);
+    s = run(s, { type: 'dial' }, { type: 'accepted' }, { type: 'call_id', callId: 'C1' }, { type: 'disconnected' }, { type: 'saved', advance: 'next_phone' });
+    expect(needsRoundClose(s)).toBe(true);
+    expect(needsRoundClose(run(s, { type: 'dial' }))).toBe(false);
+    expect(needsRoundClose(initialFlow)).toBe(false);
   });
 });

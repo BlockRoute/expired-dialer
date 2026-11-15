@@ -1,10 +1,10 @@
 'use server';
 
 import { requireUser } from '@/lib/auth';
-import { dialablePhones } from '@/lib/dialer/flow';
-import { applyOutcome, type Advance } from '@/lib/outcomes';
+import { hasNextCallablePhone } from '@/lib/dialer/flow';
+import { applyOutcome, closeRoundPatch, type Advance } from '@/lib/outcomes';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import type { CallRow, LeadRow, PhoneRow, SettingsRow } from '@/lib/db/types';
+import type { CallRow, ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '@/lib/db/types';
 
 export type SaveOutcomeResult = { ok: true; advance: Advance } | { ok: false; error: string };
 
@@ -31,6 +31,11 @@ export async function saveOutcome(
   if (!call || !settings) return { ok: false, error: 'Call not found.' };
   if (!call.lead_id || !call.phone_id) return { ok: false, error: 'This call has no lead or phone.' };
   if (!settings.outcomes.includes(outcome)) return { ok: false, error: `Unknown outcome: ${outcome}` };
+  // Already saved (e.g. a retry after a lost response): answer the same way, change nothing.
+  if (call.outcome_saved_at) {
+    if (call.outcome === outcome && call.outcome_advance) return { ok: true, advance: call.outcome_advance };
+    return { ok: false, error: 'An outcome was already saved for this call.' };
+  }
 
   const [leadRes, phonesRes] = await Promise.all([
     supabase.from('leads').select('*').eq('id', call.lead_id).maybeSingle(),
@@ -42,18 +47,32 @@ export async function saveOutcome(
   const phone = phones.find((p) => p.id === call.phone_id);
   if (!lead || !phone) return { ok: false, error: 'Lead or phone not found.' };
 
-  const order = dialablePhones(phones);
-  const at = order.findIndex((p) => p.id === phone.id);
-  const hasNextPhone = at >= 0 && at + 1 < order.length;
+  // A phone only counts as "next" if the phone-level guardrails would let it be dialed.
+  const batchIds = [...new Set(phones.map((p) => p.batch_id).filter((id): id is string => !!id))];
+  const numbers = phones.map((p) => p.number);
+  const [batchesRes, dncRes] = await Promise.all([
+    batchIds.length
+      ? supabase.from('import_batches').select('*').in('id', batchIds)
+      : Promise.resolve({ data: [], error: null }),
+    supabase.from('dnc_numbers').select('number').in('number', numbers),
+  ]);
+  if (batchesRes.error || dncRes.error) return { ok: false, error: 'Could not load the guardrail data.' };
+  const now = new Date();
+  const hasNextPhone = hasNextCallablePhone(lead, phones, phone.id, {
+    batches: (batchesRes.data ?? []) as ImportBatchRow[],
+    dncNumbers: ((dncRes.data ?? []) as { number: string }[]).map((d) => d.number),
+    settings,
+    now,
+  });
 
   let effects;
   try {
-    effects = applyOutcome({ outcome, lead, phone, hasNextPhone, settings, now: new Date(), callbackAt });
+    effects = applyOutcome({ outcome, lead, phone, hasNextPhone, settings, now, callbackAt });
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Invalid outcome.' };
   }
 
-  const { error } = await supabase.rpc('save_outcome', {
+  const { data, error } = await supabase.rpc('save_outcome', {
     p_call_id: call.id,
     p_outcome: outcome,
     p_note: note.trim() || null,
@@ -64,9 +83,31 @@ export async function saveOutcome(
     p_dnc_number: effects.addInternalDnc ?? null,
     p_callback_due_at: effects.callback?.due_at ?? null,
     p_close_callbacks: effects.advance === 'next_lead',
+    p_advance: effects.advance,
   });
   if (error) return { ok: false, error: error.message };
-  return { ok: true, advance: effects.advance };
+  return { ok: true, advance: (data as Advance | null) ?? effects.advance };
+}
+
+/**
+ * Daniel left a lead after an outcome on an earlier phone (next_phone) without
+ * working the rest: the visit still counts as a round, so the cooldown and the
+ * round cap apply.
+ */
+export async function closeRound(leadId: string): Promise<{ ok: boolean; error?: string }> {
+  await requireUser();
+  const supabase = await createSupabaseServerClient();
+  const [leadRes, settingsRes] = await Promise.all([
+    supabase.from('leads').select('*').eq('id', leadId).maybeSingle(),
+    supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
+  ]);
+  const lead = leadRes.data as LeadRow | null;
+  const settings = settingsRes.data as SettingsRow | null;
+  if (leadRes.error || settingsRes.error || !lead || !settings) return { ok: false, error: 'Could not load the lead.' };
+  const patch = closeRoundPatch(lead, settings, new Date());
+  if (Object.keys(patch).length === 0) return { ok: true };
+  const { error } = await supabase.from('leads').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', lead.id);
+  return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 /** The `calls.id` the voice route created for a Twilio parent CallSid, once it exists. */

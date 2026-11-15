@@ -11,8 +11,18 @@ export type OutcomeEffects = {
   advance: Advance;
 };
 
+const CLOSED = new Set<LeadRow['status']>(['dnc', 'dead', 'appointment', 'out_of_state']);
 const KILLS_LEAD = new Set(['not_interested', 'relisted_elsewhere', 'off_market_or_sold']);
 const ENDS_ROUND = new Set(['left_vm', 'connected', ...KILLS_LEAD]);
+
+/** Lead changes when a round ends: count it, set the cooldown, and kill the lead at max rounds. Closed leads are untouched. */
+export function closeRoundPatch(lead: LeadRow, settings: SettingsRow, now: Date): Partial<LeadRow> {
+  if (CLOSED.has(lead.status)) return {};
+  const next = afterRound(lead, settings, now);
+  // A lead that has been worked (or whose callback was serviced) is "working".
+  if (next.status === 'new' || next.status === 'callback') next.status = 'working';
+  return next;
+}
 
 /**
  * Maps a saved call outcome to its effects on the lead and phone.
@@ -29,14 +39,26 @@ export function applyOutcome(input: {
   now: Date;
   callbackAt?: string;
 }): OutcomeEffects {
+  const effects = computeEffects(input);
+  // A closed lead is never re-opened or re-counted; DNC may still escalate it.
+  if (CLOSED.has(input.lead.status)) {
+    return { ...effects, lead: input.outcome === 'dnc' ? { status: 'dnc' } : {}, callback: undefined };
+  }
+  return effects;
+}
+
+function computeEffects(input: {
+  outcome: string;
+  lead: LeadRow;
+  phone: PhoneRow;
+  hasNextPhone: boolean;
+  settings: SettingsRow;
+  now: Date;
+  callbackAt?: string;
+}): OutcomeEffects {
   const { outcome, lead, phone, hasNextPhone, settings, now, callbackAt } = input;
 
-  const endRound = (): Partial<LeadRow> => {
-    const next = afterRound(lead, settings, now);
-    // A lead that has been worked (or whose callback was serviced) is "working".
-    if (next.status === 'new' || next.status === 'callback') next.status = 'working';
-    return next;
-  };
+  const endRound = () => closeRoundPatch(lead, settings, now);
   const phoneLevel = (phonePatch?: Partial<PhoneRow>): OutcomeEffects =>
     hasNextPhone
       ? { lead: {}, phone: phonePatch, advance: 'next_phone' }

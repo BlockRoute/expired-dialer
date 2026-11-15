@@ -96,6 +96,7 @@ export type CallRow = {
   ended_at: string | null;
   outcome: string | null;
   outcome_saved_at: string | null;
+  outcome_advance: 'next_phone' | 'next_lead' | null;
   note: string | null;
   recording_path: string | null;
   ai_summary: Record<string, unknown> | null;

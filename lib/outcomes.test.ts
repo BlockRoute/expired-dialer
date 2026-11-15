@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyOutcome } from './outcomes';
+import { applyOutcome, closeRoundPatch } from './outcomes';
 import type { LeadRow, PhoneRow, SettingsRow } from './db/types';
 
 const NOW = new Date('2026-11-16T17:00:00Z');
@@ -107,5 +107,33 @@ describe('applyOutcome', () => {
 
   it('rejects an unknown outcome', () => {
     expect(() => run('banana')).toThrow(/unknown outcome/i);
+  });
+
+  describe('closed leads', () => {
+    it.each(['dnc', 'dead', 'appointment', 'out_of_state'] as const)('a %s lead keeps its status and gets no callback', (status) => {
+      const at = '2026-11-17T15:00:00.000Z';
+      expect(run('callback_requested', { lead: { status }, callbackAt: at })).toMatchObject({ lead: {}, callback: undefined });
+      expect(run('appointment_set', { lead: { status } }).lead).toEqual({});
+      expect(run('connected', { lead: { status, attempt_rounds: 2 } }).lead).toEqual({});
+      expect(run('no_answer', { lead: { status, attempt_rounds: 2 } }).lead).toEqual({});
+    });
+
+    it('still records phone effects and lets DNC escalate a closed lead', () => {
+      const r = run('dnc', { lead: { status: 'dead' } });
+      expect(r.lead).toEqual({ status: 'dnc' });
+      expect(r.addInternalDnc).toBe('+18045550142');
+      expect(run('bad_number', { lead: { status: 'dnc' }, hasNextPhone: true }).phone).toEqual({ status: 'dead' });
+    });
+  });
+
+  describe('closeRoundPatch (skipping a lead mid-visit)', () => {
+    it('counts the round and sets the cooldown', () => {
+      expect(closeRoundPatch(lead({ attempt_rounds: 1 }), settings, NOW)).toEqual({
+        attempt_rounds: 2, next_eligible_at: NEXT_ELIGIBLE, status: 'working',
+      });
+    });
+    it('leaves closed leads alone', () => {
+      expect(closeRoundPatch(lead({ status: 'dnc' }), settings, NOW)).toEqual({});
+    });
   });
 });

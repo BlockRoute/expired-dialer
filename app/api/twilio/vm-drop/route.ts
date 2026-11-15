@@ -45,7 +45,8 @@ export const POST = withApiErrors(async (request) => {
   // The child redirect is the commit point: the lead now hears the voicemail.
   const { error: updateError } = await db
     .from('calls')
-    .update({ outcome: 'left_vm', outcome_saved_at: new Date().toISOString() })
+    // outcome_saved_at stays null: the dialer's saveOutcome applies the lead effects exactly once.
+    .update({ outcome: 'left_vm' })
     .eq('id', call.id);
   if (updateError) throw new Error('Database request failed');
 

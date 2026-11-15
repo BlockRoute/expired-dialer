@@ -15,6 +15,7 @@ const base: CallRow = {
   ended_at: null,
   outcome: null,
   outcome_saved_at: null,
+  outcome_advance: null,
   note: null,
   recording_path: null,
   ai_summary: null,

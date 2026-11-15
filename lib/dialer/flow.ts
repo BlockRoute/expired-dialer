@@ -1,5 +1,6 @@
+import { checkDial, type BlockReason } from '../guardrails';
 import type { Advance } from '../outcomes';
-import type { LeadRow, PhoneRow } from '../db/types';
+import type { ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '../db/types';
 
 /** A queued lead with its dialable phones, already in call order. */
 export type FlowLead = { lead: LeadRow; phones: PhoneRow[] };
@@ -33,6 +34,41 @@ export function dialablePhones(phones: PhoneRow[]): PhoneRow[] {
     .sort((a, b) => mobile(a) - mobile(b) || a.position - b.position);
 }
 
+/** Guardrail reasons that make one phone permanently uncallable (as opposed to lead- or time-level blocks). */
+const PHONE_LEVEL: ReadonlySet<BlockReason> = new Set(['internal_dnc', 'vendor_dnc', 'unscrubbed', 'scrub_stale', 'phone_dead']);
+
+export type DialContext = {
+  batches: ImportBatchRow[];
+  dncNumbers: readonly string[];
+  settings: SettingsRow;
+  now: Date;
+};
+
+/** Dialable phones that the phone-level guardrails would not block, in call order. */
+export function callablePhones(lead: LeadRow, phones: PhoneRow[], ctx: DialContext): PhoneRow[] {
+  const dnc = new Set(ctx.dncNumbers);
+  return dialablePhones(phones).filter((phone) => {
+    const decision = checkDial({
+      lead,
+      phone,
+      batch: ctx.batches.find((b) => b.id === phone.batch_id) ?? null,
+      internalDnc: dnc.has(phone.number),
+      settings: ctx.settings,
+      now: ctx.now,
+    });
+    return decision.ok || !PHONE_LEVEL.has(decision.reason);
+  });
+}
+
+/** Whether a callable phone follows `currentPhoneId` in call order; false if that phone is not in the order. */
+export function hasNextCallablePhone(lead: LeadRow, phones: PhoneRow[], currentPhoneId: string, ctx: DialContext): boolean {
+  const order = dialablePhones(phones);
+  const at = order.findIndex((p) => p.id === currentPhoneId);
+  if (at < 0) return false;
+  const callable = new Set(callablePhones(lead, order, ctx).map((p) => p.id));
+  return order.slice(at + 1).some((p) => callable.has(p.id));
+}
+
 export const currentLead = (s: FlowState): FlowLead | null => s.queue[0] ?? null;
 export const currentPhone = (s: FlowState): PhoneRow | null => currentLead(s)?.phones[s.phoneIndex] ?? null;
 
@@ -43,6 +79,10 @@ export const canSaveOutcome = (s: FlowState) =>
 /** Skipping never logs an outcome, so it is only allowed when nothing is left unsaved. */
 export const canSkip = (s: FlowState) =>
   currentLead(s) !== null && (s.callState === 'idle' || (s.callState === 'ended' && s.callId === null));
+
+/** Idle on a later phone: an outcome was already logged this visit, so leaving the lead must close its round. */
+export const needsRoundClose = (s: FlowState) =>
+  currentLead(s) !== null && s.callState === 'idle' && s.phoneIndex > 0;
 
 const nextLead = (s: FlowState): FlowState => ({
   queue: s.queue.slice(1),
