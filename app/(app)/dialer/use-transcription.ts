@@ -35,10 +35,14 @@ export function useTranscription(call: Call | null, callId: string | null = null
   const [segments, setSegments] = useState<Segment[]>([]);
   const [status, setStatus] = useState<TranscriptionStatus>('idle');
   const ownerTurnCb = useRef<((turn: OwnerTurn) => void) | null>(null);
+  /** Resolves when the latest ended session has closed its sockets and saved its tail. */
+  const tailDrained = useRef<Promise<void>>(Promise.resolve());
   const callIdRef = useRef(callId);
   useEffect(() => {
     callIdRef.current = callId;
   });
+
+  const whenDrained = useCallback(() => tailDrained.current, []);
 
   const onOwnerTurn = useCallback((cb: (turn: OwnerTurn) => void) => {
     ownerTurnCb.current = cb;
@@ -228,13 +232,18 @@ export function useTranscription(call: Call | null, callId: string | null = null
         }
       }
       // Let Deepgram finish pending audio, then drop the sockets and save the tail.
-      setTimeout(() => {
-        for (const ws of sockets) ws.close();
-        sockets.clear();
-        void outbox.drain(finalId);
-      }, CLOSE_WAIT_MS);
+      tailDrained.current = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          for (const ws of sockets) ws.close();
+          sockets.clear();
+          outbox.drain(finalId).then(
+            () => resolve(),
+            () => resolve(),
+          );
+        }, CLOSE_WAIT_MS);
+      });
     };
   }, [call]);
 
-  return { segments, status: call ? status : ('idle' as TranscriptionStatus), onOwnerTurn };
+  return { segments, status: call ? status : ('idle' as TranscriptionStatus), onOwnerTurn, whenDrained };
 }

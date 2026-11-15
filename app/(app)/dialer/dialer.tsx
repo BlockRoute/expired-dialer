@@ -17,6 +17,7 @@ import { checkDial, type BlockReason } from '@/lib/guardrails';
 import { outcomeLabel, PRIMARY_OUTCOMES } from '@/lib/outcomes';
 import type { ImportBatchRow, SettingsRow } from '@/lib/db/types';
 import { closeRound, lookupCallId, saveOutcome } from './actions';
+import type { Prefill } from '@/lib/postcall/prefill';
 import { dncAppliesToCall } from '@/lib/coach/panel-state';
 import { CoachPanel } from './coach-panel';
 import { useTranscription } from './use-transcription';
@@ -83,6 +84,48 @@ export function Dialer(props: {
   const onDncRequest = useCallback((cid: string) => {
     if (dncAppliesToCall(cid, flowCallIdRef.current)) setDncFor(cid);
   }, []);
+  // Post-call suggestion, tied to the call it was made for; never an auto-save.
+  const [suggestion, setSuggestion] = useState<{ callId: string; prefill: Prefill } | null>(null);
+  const suggested =
+    suggestion && suggestion.callId === flow.callId && suggestion.prefill.outcome && settings.outcomes.includes(suggestion.prefill.outcome)
+      ? suggestion.prefill.outcome
+      : null;
+  const callbackInputRef = useRef<HTMLInputElement | null>(null);
+  const finishedFor = useRef<string | null>(null);
+  const whenDrained = transcription.whenDrained;
+  // Once the call has ended and its transcript tail is saved (4s at most), ask the server for the pre-fill.
+  useEffect(() => {
+    const callId = flow.callId;
+    if (flow.callState !== 'ended' || !callId || finishedFor.current === callId) return;
+    finishedFor.current = callId;
+    void (async () => {
+      await Promise.race([whenDrained(), new Promise((r) => setTimeout(r, 4000))]);
+      try {
+        const res = await fetch(`/api/calls/${callId}/finish`, { method: 'POST' });
+        const body = (await res.json().catch(() => null)) as { prefill?: Prefill | null } | null;
+        const prefill = body?.prefill;
+        if (!res.ok || !prefill || flowCallIdRef.current !== callId) return;
+        setSuggestion({ callId, prefill });
+        if (prefill.dncSuggested) onDncRequest(callId);
+        if (prefill.openCallbackPicker && prefill.outcome === 'callback_requested') {
+          // Wait a tick so the picker is mounted before it opens.
+          setTimeout(() => {
+            const input = callbackInputRef.current;
+            if (!input || flowCallIdRef.current !== callId) return;
+            input.focus();
+            try {
+              input.showPicker();
+            } catch {
+              // showPicker needs a user gesture in some browsers; focus is enough
+            }
+          }, 0);
+        }
+      } catch {
+        // the dialer works without a suggestion
+      }
+    })();
+  }, [flow.callState, flow.callId, whenDrained, onDncRequest]);
+
   /** True while a save, voicemail drop or round close is running; a ref so a fast second keypress sees it before any re-render. */
   const busyRef = useRef(false);
 
@@ -474,7 +517,11 @@ export function Dialer(props: {
                 key={o}
                 type="button"
                 className={
-                  dncRequested && !dncOverridden && o === 'dnc' ? `${btn} border-red-600 bg-red-50 ring-1 ring-red-600` : btn
+                  dncRequested && !dncOverridden && o === 'dnc'
+                    ? `${btn} border-red-600 bg-red-50 ring-1 ring-red-600`
+                    : suggested === o
+                      ? `${btn} border-neutral-900 ring-1 ring-neutral-900`
+                      : btn
                 }
                 disabled={!outcomeButtonsEnabled}
                 aria-keyshortcuts={String(PRIMARY_OUTCOMES.indexOf(o) + 1)}
@@ -503,6 +550,15 @@ export function Dialer(props: {
             )}
           </div>
 
+          {suggested && (
+            <p className="flex flex-wrap items-center gap-2 text-sm text-neutral-700" data-testid="suggested-outcome">
+              Suggested from the transcript: <span className="font-medium">{outcomeLabel(suggested)}</span>
+              <button type="button" className={btn} disabled={!outcomeButtonsEnabled} onClick={() => void submit(suggested)}>
+                Save {outcomeLabel(suggested)}
+              </button>
+            </p>
+          )}
+
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-1 flex-col gap-1 text-sm">
               Note
@@ -515,6 +571,7 @@ export function Dialer(props: {
             <label className="flex flex-col gap-1 text-sm">
               Callback
               <input
+                ref={callbackInputRef}
                 type="datetime-local"
                 className="rounded border border-neutral-300 px-2 py-1"
                 value={callbackAt}

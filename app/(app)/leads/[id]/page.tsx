@@ -19,6 +19,25 @@ const stamp = (iso: string | null) =>
       })
     : '';
 
+function CallSummary({ summary }: { summary: Record<string, unknown> }) {
+  const text = (k: string) => (typeof summary[k] === 'string' && summary[k] ? (summary[k] as string) : null);
+  const rows: [string, string | null][] = [
+    ['Summary', text('summary')],
+    ['Note', text('note')],
+    ['Next step', text('next_step')],
+  ];
+  return (
+    <dl className="space-y-0.5 rounded bg-neutral-50 px-2 py-1 text-neutral-700">
+      {rows.filter(([, v]) => v).map(([k, v]) => (
+        <div key={k}>
+          <dt className="inline font-medium">{k}: </dt>
+          <dd className="inline">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export default async function LeadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
@@ -126,6 +145,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   <span className="text-neutral-600">{stamp(c.started_at ?? c.created_at)}</span>
                 </div>
                 {c.note && <p className="text-neutral-700">{c.note}</p>}
+                {c.ai_summary && <CallSummary summary={c.ai_summary} />}
                 {recordingUrls.has(c.id) && <audio controls preload="none" src={recordingUrls.get(c.id)} className="w-full" />}
               </li>
             ))}
