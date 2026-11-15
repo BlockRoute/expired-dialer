@@ -1,0 +1,4 @@
+.env*
+experiments/typesafe/results/
+node_modules/
+.next/
