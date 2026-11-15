@@ -40,6 +40,19 @@ function num(o: Json | undefined, ...keys: string[]): number | null {
   return null;
 }
 
+/** Epoch ms from a number, a numeric string, or a date/ISO string; null if none parse. */
+function ms(o: Json | undefined, ...keys: string[]): number | null {
+  for (const k of keys) {
+    const v = o?.[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim()) {
+      const n = /^\d+$/.test(v.trim()) ? Number(v) : Date.parse(v);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return null;
+}
+
 /** Subject by address. Allowlist only: the response's value-estimate fields are never read. Null when not found. */
 export async function zillowByAddress(address: string): Promise<Subject | null> {
   const p = await get('/pro/byaddress', { propertyaddress: address });
@@ -93,8 +106,8 @@ export async function zillowSold(subject: Subject, window: Window): Promise<RawC
       lat,
       lng,
       soldPrice: num(r, 'lastSoldPrice', 'soldPrice', 'unformattedPrice', 'price'),
-      soldDate: num(r, 'lastSoldDate') ?? num(home, 'dateSold'),
-      listingDate: num(r, 'listingDateTimeOnZillow'),
+      soldDate: ms(r, 'lastSoldDate') ?? ms(home, 'dateSold'),
+      listingDate: ms(r, 'listingDateTimeOnZillow'),
       beds: num(r, 'bedrooms', 'beds'),
       baths: num(r, 'bathrooms', 'baths'),
       sqft: num(r, 'livingArea', 'area') ?? num(home, 'livingArea'),

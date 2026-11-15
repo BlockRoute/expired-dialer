@@ -23,7 +23,7 @@ type Cma = {
   credits_used: number;
 };
 
-type CmaResult = { cma: Cma | null; reason?: 'no_match' | 'error' };
+type CmaResult = { cma: Cma | null; reason?: 'no_match' | 'no_address' | 'error' };
 
 // One in-flight or finished request per lead, so a prefetch and the panel share a single call.
 const requests = new Map<string, Promise<CmaResult>>();
@@ -85,7 +85,11 @@ export function CmaPanel(props: { leadId: string; listPrice: number | null; days
       {!result && <p className="text-sm text-neutral-500">Pulling sold comps...</p>}
       {result && !cma && (
         <p className="text-sm text-neutral-600">
-          {result.reason === 'no_match' ? 'No sold comps found for this address.' : 'Comps are unavailable right now. Reload to retry.'}
+          {result.reason === 'no_match'
+            ? '0 comparable sales found'
+            : result.reason === 'no_address'
+              ? 'No property address on this lead'
+              : 'Comps are unavailable right now. Reload to retry.'}
         </p>
       )}
       {cma && range && (

@@ -28,7 +28,7 @@ export function domDays(soldMs: number, listingMs: number | null): number | null
  * assessment), no much-older homes when 5 others remain, no acreage lots against a small subject lot.
  * Ordered: within 10% of subject sqft, then most recent, then closest build year and bed/bath match. Max 7.
  */
-export function credibleComps(subject: Subject, raw: RawComp[]): Comp[] {
+export function credibleComps(subject: Subject, raw: RawComp[], limit = MAX_COMPS): Comp[] {
   let comps: Comp[] = [];
   for (const r of raw) {
     if (r.soldPrice == null || r.soldPrice <= 0 || r.soldDate == null || !r.sqft || r.sqft <= 0) continue;
@@ -65,18 +65,31 @@ export function credibleComps(subject: Subject, raw: RawComp[]): Comp[] {
       b.soldDate.localeCompare(a.soldDate) ||
       yearGap(a) - yearGap(b) ||
       bedBath(a) - bedBath(b))
-    .slice(0, MAX_COMPS);
+    .slice(0, limit);
 }
 
-/** Walks WINDOWS tightest first; stops at the first with 5+ credible comps, else keeps the widest result. */
+/**
+ * Walks WINDOWS tightest first and stops at the first with 5+ credible comps. Once the window is longer
+ * than 90 days, every credible sale from the 90-day window is kept and older sales (best-ranked first)
+ * are added only as needed to reach 5. If no window gets there, the last window's set is returned.
+ */
 export async function searchComps(subject: Subject): Promise<{ comps: Comp[]; window: Window; requests: number }> {
   let comps: Comp[] = [];
   let window = WINDOWS[0];
   let requests = 0;
+  let recentIds = new Set<string>();
   for (const w of WINDOWS) {
     requests++;
     window = w;
-    comps = credibleComps(subject, await zillowSold(subject, w));
+    const ranked = credibleComps(subject, await zillowSold(subject, w), Infinity);
+    if (w.soldInLast === '90_days') {
+      recentIds = new Set(ranked.map((c) => c.zpid));
+      comps = ranked.slice(0, MAX_COMPS);
+    } else {
+      const recent = ranked.filter((c) => recentIds.has(c.zpid)).slice(0, MAX_COMPS);
+      const older = ranked.filter((c) => !recentIds.has(c.zpid));
+      comps = [...recent, ...older.slice(0, Math.max(0, ENOUGH - recent.length))];
+    }
     if (comps.length >= ENOUGH) break;
   }
   return { comps, window, requests };

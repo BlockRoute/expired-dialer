@@ -85,4 +85,25 @@ describe('searchComps window search', () => {
     expect(q.get('sortOrder')).toBe('Newest');
     expect(q.get('squareFeetRange')).toBe(`min:${Math.floor(subject.sqft! * 0.8)}, max:${Math.ceil(subject.sqft! * 1.25)}`);
   });
+
+  it('keeps every 90-day comp when widening and tops up with only as many older ones as needed to reach 5', async () => {
+    const day = 86_400_000;
+    const mk = (zpid: string, sqft: number, daysAgo: number) => ({
+      zpid, address: `${zpid} Test St, Richmond, VA 23235`, latitude: subject.lat + 0.002, longitude: subject.lng + 0.003,
+      price: 400000, lastSoldDate: Date.UTC(2026, 10, 1) - daysAgo * day, listingDateTimeOnZillow: Date.UTC(2026, 10, 1) - (daysAgo + 20) * day,
+      bedrooms: 4, bathrooms: 2.5, livingArea: sqft, yearBuilt: 1996, lotSize: 9500,
+    });
+    // 3 recent homes 14% off the subject size (not "same plan"), then 4 older same-plan homes.
+    const recent = ['101', '102', '103'].map((z, i) => mk(z, 2300, 10 + i * 10));
+    const older = ['201', '202', '203', '204'].map((z, i) => mk(z, 2010, 120 + i * 20));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const soldInLast = new URL(url).searchParams.get('soldInLast');
+      return new Response(JSON.stringify({ results: soldInLast === '90_days' ? recent : [...recent, ...older] }), { status: 200 });
+    }));
+    process.env.REALTYAPI_KEY = 'test-key';
+    const out = await searchComps(subject);
+    expect(out.window).toEqual({ soldInLast: '6_months', radius: 2 });
+    expect(out.comps.map((c) => c.zpid)).toEqual(['101', '102', '103', '201', '202']);
+    expect(out.requests).toBe(4);
+  });
 });

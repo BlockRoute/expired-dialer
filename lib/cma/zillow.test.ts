@@ -58,4 +58,19 @@ describe('zillowSold', () => {
     expect((init.headers as Record<string, string>)['x-realtyapi-key']).toBe('test-key');
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
+
+  it('reads lastSoldDate and listingDateTimeOnZillow as epoch ms, numeric strings, or date strings', async () => {
+    const sold = Date.UTC(2026, 9, 28);
+    const listed = Date.UTC(2026, 9, 1);
+    const body = soldSearch(3);
+    body.results[0] = { ...body.results[0], lastSoldDate: sold, listingDateTimeOnZillow: listed };
+    (body.results[1] as Record<string, unknown>).lastSoldDate = '2026-10-28';
+    (body.results[1] as Record<string, unknown>).listingDateTimeOnZillow = '2026-10-01T00:00:00Z';
+    (body.results[2] as Record<string, unknown>).lastSoldDate = String(sold);
+    (body.results[2] as Record<string, unknown>).listingDateTimeOnZillow = String(listed);
+    stub(body);
+    const comps = await zillowSold(SUBJECT, { soldInLast: '90_days', radius: 1 });
+    expect(comps.map((c) => c.soldDate)).toEqual([sold, sold, sold]);
+    expect(comps.map((c) => c.listingDate)).toEqual([listed, listed, listed]);
+  });
 });
