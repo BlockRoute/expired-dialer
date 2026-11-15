@@ -2,3 +2,5 @@
 experiments/typesafe/results/
 node_modules/
 .next/
+__pycache__/
+.superpowers/
