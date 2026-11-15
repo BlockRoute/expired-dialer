@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     });
     if (!decision.ok) return xml(rejectTwiml(decision.reason));
 
-    const callerId = settings.caller_id ?? process.env.TWILIO_CALLER_ID;
+    const callerId = settings.caller_id || process.env.TWILIO_CALLER_ID;
     if (!callerId) return xml(messageTwiml('Blocked: no caller ID configured'));
 
     const { data: call, error: insertError } = await db

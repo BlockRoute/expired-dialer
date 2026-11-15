@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dialTwiml, rejectTwiml } from './twiml';
+import { dialTwiml, forwardTwiml, playTwiml, rejectTwiml } from './twiml';
 
 describe('twiml', () => {
   const original = process.env.APP_URL;
@@ -34,5 +34,16 @@ describe('twiml', () => {
     const xml = rejectTwiml('vendor_dnc');
     expect(xml).toContain('<Hangup/>');
     expect(xml).toContain('<Say>Blocked:');
+  });
+
+  it('forwardTwiml dials the cell with the original caller as caller id', () => {
+    expect(forwardTwiml({ to: '+18045550100', callerId: '+18045550123' })).toBe(
+      '<Response><Dial callerId="+18045550123">+18045550100</Dial></Response>',
+    );
+  });
+
+  it('playTwiml XML-escapes the signed URL and hangs up', () => {
+    const xml = playTwiml('https://x.test/a.mp3?token=1&e=2');
+    expect(xml).toBe('<Response><Play>https://x.test/a.mp3?token=1&amp;e=2</Play><Hangup/></Response>');
   });
 });

@@ -163,6 +163,9 @@ export type CmaRow = {
   created_at: string;
 };
 
+/** `path` is the object key in the private `vm-drops` storage bucket. */
+export type VoicemailDrop = { id: string; label: string; path: string };
+
 export type SettingsRow = {
   id: 1;
   caller_id: string | null;
@@ -171,5 +174,5 @@ export type SettingsRow = {
   round_gap_hours: number;
   ring_timeout_s: number;
   outcomes: string[];
-  voicemail_drops: unknown[];
+  voicemail_drops: VoicemailDrop[];
 };

@@ -1,6 +1,6 @@
 import type { BlockReason } from '@/lib/guardrails';
 
-const escapeXml = (s: string) =>
+export const escapeXml = (s: string) =>
   s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -32,4 +32,14 @@ export function messageTwiml(message: string): string {
 
 export function rejectTwiml(reason: BlockReason): string {
   return messageTwiml(`Blocked: ${reason.replace(/_/g, ' ')}`);
+}
+
+/** Inbound call forwarded to Daniel's cell, showing the original caller's number. */
+export function forwardTwiml(opts: { to: string; callerId: string }): string {
+  return `<Response><Dial callerId="${escapeXml(opts.callerId)}">${escapeXml(opts.to)}</Dial></Response>`;
+}
+
+/** Voicemail drop: plays a recording to the lead, then hangs up. */
+export function playTwiml(url: string): string {
+  return `<Response><Play>${escapeXml(url)}</Play><Hangup/></Response>`;
 }

@@ -22,3 +22,8 @@ export function voiceToken(identity: 'daniel'): string {
   );
   return token.toJwt();
 }
+
+/** Twilio REST client (account auth) for mid-call control. */
+export function twilioRestClient() {
+  return twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!);
+}
