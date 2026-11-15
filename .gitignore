@@ -1,6 +1,13 @@
 .env*
+!.env.example
 experiments/typesafe/results/
 node_modules/
 .next/
 __pycache__/
 .superpowers/
+.netlify/
+supabase/.temp/
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+.tmp/
