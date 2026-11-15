@@ -20,6 +20,7 @@ import { closeRound, lookupCallId, saveOutcome } from './actions';
 import type { Prefill } from '@/lib/postcall/prefill';
 import { dncAppliesToCall } from '@/lib/coach/panel-state';
 import { CoachPanel } from './coach-panel';
+import { CmaPanel, prefetchCma } from './cma-panel';
 import { useTranscription } from './use-transcription';
 
 type DeviceStatus = 'loading' | 'ready' | 'error';
@@ -58,6 +59,11 @@ export function Dialer(props: {
   const [flow, dispatch] = useReducer(flowReducer, props.queue, (queue) => ({ ...initialFlow, queue }));
   const lead = currentLead(flow);
   const phone = currentPhone(flow);
+  // Only the next queued lead is warmed, never the whole queue (RealtyAPI credits).
+  const nextLeadId = flow.queue[1]?.lead.id ?? null;
+  useEffect(() => {
+    if (nextLeadId) prefetchCma(nextLeadId);
+  }, [nextLeadId]);
 
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus>('loading');
   const [message, setMessage] = useState<string | null>(null);
@@ -459,6 +465,10 @@ export function Dialer(props: {
             )}
           </div>
         </section>
+      )}
+
+      {lead && (
+        <CmaPanel leadId={lead.lead.id} listPrice={lead.lead.list_price} daysOnMarket={lead.lead.days_on_market} />
       )}
 
       {lead && dncRequested && (
