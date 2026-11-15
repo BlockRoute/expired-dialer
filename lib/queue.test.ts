@@ -19,12 +19,13 @@ describe('orderQueue', () => {
     ], NOW);
     expect(ids(out)).toEqual(['cb1', 'cb2', 'newest', 'old', 'retryA', 'retryB']);
   });
-  it('future callback is not due; retry not yet eligible is excluded', () => {
+  it('a lead whose callback is not yet due is excluded (the owner asked to be called later); not-yet-eligible retries too', () => {
     const out = orderQueue([
-      L('future', { dueCallbackAt: '2026-11-17T00:00:00Z', expired_date: '2026-11-01' }),
+      L('future', { status: 'callback', dueCallbackAt: '2026-11-17T00:00:00Z', expired_date: '2026-11-01' }),
       L('wait', { attempt_rounds: 1, next_eligible_at: '2026-11-17T00:00:00Z' }),
+      L('fresh', { expired_date: '2026-11-02' }),
     ], NOW);
-    expect(ids(out)).toEqual(['future']);
+    expect(ids(out)).toEqual(['fresh']);
   });
   it('excludes closed statuses, even with a due callback', () => {
     const out = orderQueue(

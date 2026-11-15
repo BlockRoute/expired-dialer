@@ -3,13 +3,18 @@ import type { LeadRow } from './db/types';
 const CLOSED = new Set<LeadRow['status']>(['dnc', 'dead', 'appointment', 'out_of_state']);
 const ms = (iso: string) => new Date(iso).getTime();
 
-/** Due callbacks (oldest due first), then fresh leads (newest expired_date first), then eligible retries (soonest eligible first). */
+/**
+ * Due callbacks (oldest due first), then fresh leads (newest expired_date first), then eligible retries (soonest eligible first).
+ * A lead whose callback is not yet due is left out: the owner asked to be called later.
+ */
 export function orderQueue(
   leads: (LeadRow & { dueCallbackAt: string | null })[],
   now: Date,
 ): LeadRow[] {
   const t = now.getTime();
-  const open = leads.filter((l) => !CLOSED.has(l.status));
+  const open = leads.filter(
+    (l) => !CLOSED.has(l.status) && (l.dueCallbackAt === null || ms(l.dueCallbackAt) <= t),
+  );
   const due = open
     .filter((l) => l.dueCallbackAt !== null && ms(l.dueCallbackAt) <= t)
     .sort((a, b) => ms(a.dueCallbackAt!) - ms(b.dueCallbackAt!));
