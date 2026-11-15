@@ -390,11 +390,11 @@ README lists every env var and the one-time manual steps from spec §6 (Twilio n
 **Interfaces:**
 - Consumes: `CmaRow`, `indicatedValue`.
 - Produces:
-  - `makeSlug(street: string): string` → `<house#>-<street>-<6 random base32 chars>` lowercase hyphenated (e.g. `4417-grove-ave-k3m9qd`).
+  - `makeSlug(street: string): string` → `<house#>-<street>-<26 random base32 chars from crypto.getRandomValues (128+ bits)>` lowercase hyphenated.
   - Editor: include/exclude comps (recomputes range via `indicatedValue`), editable range and the two notes ("Works in your favor" / "Buyers will weigh") with a "Draft notes" button using `claude-sonnet-5-5` and the comp-map voice rules; Publish sets `published_slug`, `published_at`.
   - Seller page: server-rendered from the published `cmas` row; layout, tokens (light and dark), Leaflet layers (CARTO Voyager with the skill's key, Esri imagery), pins, popups, rings, disclaimer and footer exactly per the comp-map skill §Step 4 (`~/.claude/skills/synced/*/cma-comp-map/SKILL.md`); `<meta name="robots" content="noindex">`; unpublished or unknown slug → 404.
 
-- [ ] **Step 1: Write failing test** — `makeSlug('4417 Grove Ave')` matches `/^4417-grove-ave-[a-z2-7]{6}$/`.
+- [ ] **Step 1: Write failing test** — `makeSlug('4417 Grove Ave')` matches `/^4417-grove-ave-[a-z2-7]{26}$/` and two calls differ.
 - [ ] **Step 2: Write failing Playwright test** — published fixture CMA renders title `4417 Grove Ave Comps`, has robots noindex meta, shows the footer credential line, contains no `—` character; unpublished slug returns 404.
 - [ ] **Step 3: Run, verify FAIL**
 - [ ] **Step 4: Implement**
