@@ -80,6 +80,35 @@ describe('buildLeads', () => {
   });
 });
 
+describe('duplicate and row-level phones', () => {
+  it('dedupes the same number in one row: worst DNC, earliest slot, first line type', () => {
+    const { leads } = buildLeads(
+      [{ ...base, 'Phone 1': '8045550199', 'Phone 1 DNC': 'N', 'Phone 2': '(804) 555-0199', 'Phone 2 Type': 'W' }],
+      { ...mapping, columns: { ...mapping.columns, 'Phone 2 DNC': { field: 'phone_dnc', slot: 2 } } },
+    );
+    expect(leads[0].phones).toHaveLength(1);
+    expect(leads[0].phones[0]).toMatchObject({ number: '+18045550199', lineType: 'mobile', vendorDnc: 'callable' });
+    const dnc = buildLeads(
+      [{ ...base, 'Phone 1': '8045550199', 'Phone 1 DNC': 'N', 'Phone 2': '8045550199', 'Phone 2 DNC': 'Y' }],
+      { ...mapping, columns: { ...mapping.columns, 'Phone 2 DNC': { field: 'phone_dnc', slot: 2 } } },
+    );
+    expect(dnc.leads[0].phones).toHaveLength(1);
+    expect(dnc.leads[0].phones[0].vendorDnc).toBe('do_not_call');
+  });
+
+  it('slot 0 (row-level) DNC applies to every phone, worst wins', () => {
+    const m: VendorMapping = {
+      ...mapping,
+      columns: { ...mapping.columns, 'Owner DNC': { field: 'phone_dnc' } },
+    };
+    const { leads } = buildLeads(
+      [{ ...base, 'Phone 1': '8045550142', 'Phone 2': '8045550199', 'Phone 1 DNC': 'N', 'Owner DNC': 'Y' }],
+      m,
+    );
+    expect(leads[0].phones.map((p) => p.vendorDnc)).toEqual(['do_not_call', 'do_not_call']);
+  });
+});
+
 describe('mostCommonScrubDate', () => {
   it('returns the most common mapped scrub date as ISO', () => {
     const rows = [{ Scrubbed: '11/01/2026' }, { Scrubbed: '2026-11-01' }, { Scrubbed: '10/30/2026' }];
@@ -103,6 +132,14 @@ describe('mergeLead', () => {
     const patch = mergeLead({ ...existing, status }, incoming());
     expect(patch.status ?? status).toBe(status);
     expect('status' in patch).toBe(false);
+  });
+
+  it('moves an active existing lead out of state, but not protected ones', () => {
+    const oos = { ...incoming(), outOfState: true };
+    expect(mergeLead(existing, oos).status).toBe('out_of_state');
+    for (const status of ['dnc', 'dead', 'appointment'] as const) {
+      expect('status' in mergeLead({ ...existing, status }, oos)).toBe(false);
+    }
   });
 
   it('updates listing fields but not blanks, ids, or keys', () => {

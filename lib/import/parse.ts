@@ -26,7 +26,8 @@ export function parseSheet(
     return n === 1 ? base : `${base} (${n})`;
   });
   const rows = grid.slice(1).map((r) => {
-    const out: Record<string, string> = {};
+    // Null prototype: a header named __proto__ stays an ordinary key.
+    const out: Record<string, string> = Object.create(null);
     headers.forEach((h, i) => {
       out[h] = String((r as unknown[])[i] ?? '').trim();
     });

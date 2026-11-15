@@ -10,6 +10,15 @@ function fixture() {
 }
 
 describe('parseSheet', () => {
+  it('keeps a __proto__ header as a plain key without touching prototypes', () => {
+    const csv = Buffer.from('__proto__,Address\npolluted,1 Main St\n');
+    const { headers, rows } = parseSheet(csv.buffer.slice(csv.byteOffset, csv.byteOffset + csv.byteLength) as ArrayBuffer, 'x.csv');
+    expect(headers).toEqual(['__proto__', 'Address']);
+    expect(Object.keys(rows[0])).toEqual(['__proto__', 'Address']);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(rows[0])).toBeNull();
+  });
+
   it('reads headers and trimmed string rows from the sample vendor CSV', () => {
     const { headers, rows } = fixture();
     expect(headers).toHaveLength(21);

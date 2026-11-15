@@ -1,7 +1,7 @@
 import { normalizeAddress } from '../address';
 import { normalizePhone } from '../phone';
 import type { LeadRow, VendorDnc } from '../db/types';
-import { inferSlot, type FieldKey, type VendorMapping } from './mapping';
+import { effectiveSlot, type ColumnTarget, type FieldKey, type VendorMapping } from './mapping';
 
 export type LineType = 'mobile' | 'landline' | 'voip';
 
@@ -79,8 +79,8 @@ export function buildLeads(
   rows.forEach((row, idx) => {
     const fields: Record<string, unknown> = {};
     const slots = new Map<number, Slot>();
-    const slotOf = (header: string, slot?: number) => {
-      const n = slot ?? inferSlot(header) ?? 1;
+    const slotOf = (header: string, target: ColumnTarget) => {
+      const n = effectiveSlot(header, target);
       if (!slots.has(n)) slots.set(n, { number: null, types: [], dnc: 'unknown' });
       return slots.get(n)!;
     };
@@ -90,12 +90,12 @@ export function buildLeads(
       const f = target.field;
       if (f === 'ignore' || f === 'scrub_date') continue;
       if (f === 'phone') {
-        const s = slotOf(header, target.slot);
+        const s = slotOf(header, target);
         s.number ??= value ? normalizePhone(value) : null;
       } else if (f === 'phone_type') {
-        slotOf(header, target.slot).types.push(value);
+        slotOf(header, target).types.push(value);
       } else if (f === 'phone_dnc') {
-        const s = slotOf(header, target.slot);
+        const s = slotOf(header, target);
         const v = dncValue(value, mapping.dncValues);
         if (DNC_RANK[v] > DNC_RANK[s.dnc]) s.dnc = v;
       } else if (!value) {
@@ -115,22 +115,31 @@ export function buildLeads(
     const address = (fields.property_address as string | undefined) ?? '';
     if (!address) return void skipped.push({ row: idx + 1, reason: 'no_address' });
 
-    const phones = [...slots.entries()]
-      .filter(([, s]) => s.number)
-      .map(([slot, s]) => ({
-        slot,
-        number: s.number as string,
-        lineType: s.types.map(lineType).find((t) => t !== null) ?? null,
-        vendorDnc: s.dnc,
-      }))
-      .sort((a, b) => Number(b.lineType === 'mobile') - Number(a.lineType === 'mobile') || a.slot - b.slot);
+    // Slot 0 holds row-level columns that apply to every phone (worst DNC wins).
+    const all = slots.get(0);
+    const byNumber = new Map<string, { slot: number; number: string; lineType: LineType | null; vendorDnc: VendorDnc }>();
+    for (const [slot, sl] of [...slots.entries()].sort((a, b) => a[0] - b[0])) {
+      if (!sl.number) continue;
+      const lt = sl.types.map(lineType).find((t) => t !== null) ?? all?.types.map(lineType).find((t) => t !== null) ?? null;
+      const dnc = all && DNC_RANK[all.dnc] > DNC_RANK[sl.dnc] ? all.dnc : sl.dnc;
+      const dup = byNumber.get(sl.number);
+      if (!dup) byNumber.set(sl.number, { slot, number: sl.number, lineType: lt, vendorDnc: dnc });
+      else {
+        // Same number twice in one row: worst DNC, earliest slot, first known line type.
+        if (DNC_RANK[dnc] > DNC_RANK[dup.vendorDnc]) dup.vendorDnc = dnc;
+        dup.lineType ??= lt;
+      }
+    }
+    const phones = [...byNumber.values()].sort(
+      (a, b) => Number(b.lineType === 'mobile') - Number(a.lineType === 'mobile') || a.slot - b.slot,
+    );
     if (phones.length === 0) return void skipped.push({ row: idx + 1, reason: 'no_valid_phone' });
 
     if (!fields.owner_full_name) {
       const name = [fields.owner_first_name, fields.owner_last_name].filter(Boolean).join(' ');
       if (name) fields.owner_full_name = name;
     }
-    fields.raw = row;
+    fields.raw = Object.fromEntries(Object.entries(row).filter(([k]) => k !== '__proto__'));
 
     const states = [fields.property_state, fields.mailing_state].filter(Boolean) as string[];
     const outOfState = states.some((s) => !isVirginia(s));
@@ -188,15 +197,18 @@ const NEVER_UPDATE = new Set([
 
 /**
  * Patch applied to an existing lead on re-import: listing fields only.
- * Blank incoming values never overwrite; status is never touched here
- * (dnc/dead/appointment are protected, and others keep their working state).
+ * Blank incoming values never overwrite. Status is protected for dnc/dead/appointment;
+ * the only change is moving other leads to out_of_state when the new file shows a non-VA state.
  */
 export function mergeLead(existing: LeadRow, incoming: ImportedLead): Partial<LeadRow> {
-  void existing;
   const patch: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(incoming.fields)) {
     if (NEVER_UPDATE.has(k) || v === null || v === undefined || v === '') continue;
     patch[k] = v;
+  }
+  // A re-import that now shows a non-VA state pulls an active lead out of the queue.
+  if (incoming.outOfState && !['dnc', 'dead', 'appointment', 'out_of_state'].includes(existing.status)) {
+    patch.status = 'out_of_state';
   }
   return patch as Partial<LeadRow>;
 }

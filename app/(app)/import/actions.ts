@@ -2,10 +2,10 @@
 
 import { requireUser } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { jev } from '@/lib/typesafe/client';
-import { dncValueChoice } from '@/lib/typesafe/questions';
 import { mergeLead, mergeVendorDnc, type ImportedLead } from '@/lib/import/build';
-import { suggestMapping, type ColumnTarget, type DncValue, type VendorMapping } from '@/lib/import/mapping';
+import { importedLeadsSchema } from '@/lib/import/schema';
+import { classifyDncValues, suggestMapping } from '@/lib/import/suggest';
+import type { ColumnTarget, DncValue, VendorMapping } from '@/lib/import/mapping';
 import type { ImportBatchRow, LeadRow, PhoneRow } from '@/lib/db/types';
 
 const CHUNK = 500;
@@ -60,10 +60,11 @@ export async function saveMapping(mapping: VendorMapping): Promise<void> {
 export async function suggestMappingAction(
   headers: string[],
   rows: Record<string, string>[],
+  only?: string[],
 ): Promise<SuggestResult> {
   await requireUser();
   try {
-    const out = await suggestMapping(headers, rows.slice(0, SAMPLE_ROWS));
+    const out = await suggestMapping(headers, rows.slice(0, SAMPLE_ROWS), only);
     return { ok: true, ...out };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -75,21 +76,7 @@ export async function suggestDncValues(
   items: { column: string; value: string }[],
 ): Promise<Record<string, DncValue>> {
   await requireUser();
-  const out: Record<string, DncValue> = {};
-  const question = { meaning: dncValueChoice() };
-  await Promise.all(
-    items.map(async ({ column, value }) => {
-      try {
-        const a = await jev({ column_header: column, cell_value: value }, question);
-        const m = a.meaning;
-        const c = m?.type === 'choice' ? m.choice : 'unknown';
-        out[value] = c === 'do_not_call' || c === 'callable' ? c : 'unknown';
-      } catch {
-        out[value] = 'unknown';
-      }
-    }),
-  );
-  return out;
+  return classifyDncValues(items);
 }
 
 export async function createBatch(input: {
@@ -135,9 +122,11 @@ export async function finishBatch(
 
 export async function applyImport(
   batchId: string,
-  leads: ImportedLead[],
+  input: ImportedLead[],
 ): Promise<{ created: number; updated: number; phonesAdded: number; dncPhones: number }> {
   await requireUser();
+  // Untrusted client payload: reject the whole chunk if anything is off.
+  const leads = importedLeadsSchema.parse(input) as ImportedLead[];
   const supabase = await createSupabaseServerClient();
   const totals = { created: 0, updated: 0, phonesAdded: 0, dncPhones: 0 };
 
@@ -216,11 +205,14 @@ export async function applyImport(
         }
       }
     }
-    for (const part of chunks(updatedPhones, CHUNK)) {
+    const uniq = <T,>(rows: T[], key: (r: T) => string) => [...new Map(rows.map((r) => [key(r), r])).values()];
+    const updates = uniq(updatedPhones, (p) => p.id);
+    const inserts = uniq(newPhones, (p) => `${p.lead_id}|${p.number}`);
+    for (const part of chunks(updates, CHUNK)) {
       const { error } = await supabase.from('phones').upsert(part, { onConflict: 'id' });
       if (error) throw new Error(error.message);
     }
-    for (const part of chunks(newPhones, CHUNK)) {
+    for (const part of chunks(inserts, CHUNK)) {
       const { data, error } = await supabase.from('phones').insert(part).select('vendor_dnc');
       if (error) throw new Error(error.message);
       totals.phonesAdded += data?.length ?? 0;

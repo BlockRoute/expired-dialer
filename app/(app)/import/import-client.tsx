@@ -4,7 +4,9 @@ import { useMemo, useState } from 'react';
 import { buildLeads, mostCommonScrubDate, type ImportedLead } from '@/lib/import/build';
 import {
   FIELD_KEYS,
+  PHONE_FIELDS,
   inferSlot,
+  orphanSlotColumns,
   unmappedDncColumns,
   type ColumnTarget,
   type DncValue,
@@ -23,7 +25,6 @@ import {
 } from './actions';
 
 const SEND_CHUNK = 200; // keeps each server-action payload well under the 1 MB body limit
-const PHONE_FIELDS: FieldKey[] = ['phone', 'phone_type', 'phone_dnc'];
 const input = 'rounded border border-neutral-300 px-2 py-1 text-sm';
 
 type Parsed = { fileName: string; headers: string[]; rows: Record<string, string>[] };
@@ -70,9 +71,12 @@ export function ImportClient() {
     () => (parsed ? buildLeads(parsed.rows, mapping) : null),
     [parsed, mapping],
   );
+  const unmappedHeaders = parsed ? parsed.headers.filter((h) => !(h in columns)) : [];
+  const orphans = useMemo(() => orphanSlotColumns(mapping), [mapping]);
   const hasPhoneColumn = Object.values(columns).some((t) => t.field === 'phone');
   const canImport =
-    !busy && !!built && !!vendor.trim() && !!scrubDate && hasPhoneColumn && blocking.length === 0 && !result;
+    !busy && !!built && !!vendor.trim() && !!scrubDate && hasPhoneColumn && blocking.length === 0 &&
+    missingDnc.length === 0 && unmappedHeaders.length === 0 && orphans.length === 0 && !result;
 
   async function readFile() {
     if (!file || !vendor.trim()) return;
@@ -89,11 +93,24 @@ export function ImportClient() {
       let nextColumns: Record<string, ColumnTarget>;
       let nextDnc: Record<string, DncValue> = {};
       if (saved) {
-        nextColumns = saved.columns;
+        nextColumns = { ...saved.columns };
         nextDnc = saved.dncValues;
         setConfidence({});
         setFlags({});
         setSource('saved');
+        const fresh = headers.filter((h) => !(h in nextColumns));
+        if (fresh.length > 0) {
+          // New or renamed headers must be classified, including the DNC check.
+          setBusy('Checking new columns with Jev...');
+          const s = await suggestMappingAction(headers, rows, fresh);
+          if (s.ok) {
+            for (const [h, t] of Object.entries(s.columns)) nextColumns[h] = { field: t.field, slot: t.slot };
+            setConfidence(Object.fromEntries(Object.entries(s.columns).map(([h, t]) => [h, t.confidence])));
+            setFlags(s.dncColumnFlags);
+          } else {
+            setError(`Jev could not check the new columns (${s.error}). Choose a field for each one.`);
+          }
+        }
       } else {
         setBusy('Asking Jev to map the columns...');
         const s = await suggestMappingAction(headers, rows);
@@ -105,7 +122,7 @@ export function ImportClient() {
           setFlags(s.dncColumnFlags);
         } else {
           setError(`Jev could not suggest a mapping (${s.error}). Map the columns by hand.`);
-          nextColumns = Object.fromEntries(headers.map((h) => [h, { field: 'ignore' as FieldKey }]));
+          nextColumns = {}; // every column must be chosen explicitly
           setConfidence({});
           setFlags({});
         }
@@ -271,9 +288,10 @@ export function ImportClient() {
                       <td className="py-1 pr-3">
                         <select
                           className={input}
-                          value={columns[h]?.field ?? 'ignore'}
+                          value={columns[h]?.field ?? ''}
                           onChange={(e) => setField(h, e.target.value as FieldKey)}
                         >
+                          {!(h in columns) && <option value="">Choose...</option>}
                           {FIELD_KEYS.map((f) => (
                             <option key={f} value={f}>
                               {f}
@@ -285,13 +303,15 @@ export function ImportClient() {
                         {PHONE_FIELDS.includes(columns[h]?.field ?? 'ignore') ? (
                           <input
                             type="number"
-                            min={1}
+                            min={0}
                             className={`${input} w-16`}
+                            placeholder={columns[h]?.field === 'phone' ? '1' : 'all'}
+                            title="0 or blank (no number in header) = applies to all phones in the row"
                             value={columns[h]?.slot ?? ''}
                             onChange={(e) =>
                               setColumns((c) => ({
                                 ...c,
-                                [h]: { ...c[h], slot: e.target.value ? Number(e.target.value) : undefined },
+                                [h]: { ...c[h], slot: e.target.value !== '' ? Number(e.target.value) : undefined },
                               }))
                             }
                           />
@@ -314,7 +334,7 @@ export function ImportClient() {
             <section className="space-y-2">
               <h2 className="font-medium">Do-not-call values</h2>
               <p className="text-sm text-neutral-600">
-                Confirm what each value in the DNC columns means. Anything blank or not listed is treated as unknown.
+                Confirm what each value in the DNC columns means. Every value must have a meaning before you can import. Blank cells are treated as unknown.
               </p>
               <table className="text-left text-sm">
                 <thead className="border-b border-neutral-300 text-neutral-600">
@@ -330,9 +350,10 @@ export function ImportClient() {
                       <td className="py-1">
                         <select
                           className={input}
-                          value={dncValues[v] ?? 'unknown'}
+                          value={dncValues[v] ?? ''}
                           onChange={(e) => setDncValues((d) => ({ ...d, [v]: e.target.value as DncValue }))}
                         >
+                          {!(v in dncValues) && <option value="">Choose...</option>}
                           <option value="do_not_call">do not call</option>
                           <option value="callable">callable</option>
                           <option value="unknown">unknown</option>
@@ -396,6 +417,34 @@ export function ImportClient() {
                 {built.leads.filter((l) => l.outOfState).length} out of state, {built.skipped.length} skipped (
                 {built.skipped.filter((s) => s.reason === 'no_address').length} no address,{' '}
                 {built.skipped.filter((s) => s.reason === 'no_valid_phone').length} no valid phone).
+              </p>
+            )}
+            {unmappedHeaders.length > 0 && (
+              <p className="text-sm text-amber-800">
+                Choose a field for {unmappedHeaders.length} unmapped column{unmappedHeaders.length === 1 ? '' : 's'}:{' '}
+                {unmappedHeaders.join(', ')}.
+                <button
+                  className="ml-2 rounded border px-2 py-0.5"
+                  onClick={() =>
+                    setColumns((c) => ({
+                      ...c,
+                      ...Object.fromEntries(unmappedHeaders.map((h) => [h, { field: 'ignore' as FieldKey }])),
+                    }))
+                  }
+                >
+                  Ignore all of them
+                </button>
+              </p>
+            )}
+            {orphans.length > 0 && (
+              <p className="text-sm text-amber-800">
+                {orphans.join(', ')}: no phone column has that slot. Set the slot to match a phone column, or 0 to apply
+                it to every phone in the row.
+              </p>
+            )}
+            {missingDnc.length > 0 && (
+              <p className="text-sm text-amber-800">
+                {missingDnc.length} do-not-call value{missingDnc.length === 1 ? ' needs' : 's need'} a meaning above.
               </p>
             )}
             {!hasPhoneColumn && <p className="text-sm text-red-700">Map at least one column to phone.</p>}

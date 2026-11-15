@@ -1,6 +1,3 @@
-import type { JevAnswers } from '@/lib/typesafe/client';
-import { columnFieldChoice, dncColumnNoul } from '@/lib/typesafe/questions';
-
 export type FieldKey =
   | 'owner_full_name' | 'owner_first_name' | 'owner_last_name'
   | 'property_address' | 'property_city' | 'property_state' | 'property_zip'
@@ -48,7 +45,7 @@ export const FIELDS: Record<FieldKey, string> = {
 };
 
 export const FIELD_KEYS = Object.keys(FIELDS) as FieldKey[];
-const PHONE_FIELDS: FieldKey[] = ['phone', 'phone_type', 'phone_dnc'];
+export const PHONE_FIELDS: FieldKey[] = ['phone', 'phone_type', 'phone_dnc'];
 
 /** First integer in the header: "Phone 1 DNC" -> 1, "Ph2 Status" -> 2. */
 export function inferSlot(header: string): number | undefined {
@@ -67,50 +64,28 @@ export function unmappedDncColumns(mapping: VendorMapping, flags: Record<string,
     .map(([header]) => header);
 }
 
-const MAX_IN_FLIGHT = 6;
-const SAMPLE_COUNT = 5;
+/**
+ * Slot a column applies to. Phones default to 1; phone_type / phone_dnc with no
+ * number in the header default to 0, meaning "all phones in the row" (worst DNC wins).
+ */
+export function effectiveSlot(header: string, target: ColumnTarget): number {
+  const own = target.slot ?? inferSlot(header);
+  if (own !== undefined) return own;
+  return target.field === 'phone' ? 1 : 0;
+}
 
-/** One Jev request per column (field Choice + DNC-column Noul), max 6 in flight. */
-export async function suggestMapping(
-  headers: string[],
-  rows: Record<string, string>[],
-): Promise<{
-  columns: Record<string, ColumnTarget & { confidence: number }>;
-  dncColumnFlags: Record<string, number>;
-}> {
-  // Dynamic import keeps this module importable from client components.
-  const { jev } = await import('@/lib/typesafe/client');
-  const questions = { field: columnFieldChoice(FIELDS), dnc: dncColumnNoul() };
-  const columns: Record<string, ColumnTarget & { confidence: number }> = {};
-  const dncColumnFlags: Record<string, number> = {};
-
-  let next = 0;
-  const worker = async () => {
-    while (next < headers.length) {
-      const header = headers[next++];
-      const samples = rows
-        .map((r) => r[header] ?? '')
-        .filter((v) => v !== '')
-        .slice(0, SAMPLE_COUNT);
-      const state = {
-        file: 'Expired-listing lead export purchased from a lead vendor',
-        all_column_headers: headers,
-        column: { header, sample_values: samples },
-      };
-      const answers: JevAnswers = await jev(state, questions);
-      const f = answers.field;
-      const choice = f?.type === 'choice' && f.choice in FIELDS ? (f.choice as FieldKey) : 'ignore';
-      const confidence = f?.type === 'choice' ? f.confidence : 0;
-      const target: ColumnTarget & { confidence: number } = { field: choice, confidence };
-      if (PHONE_FIELDS.includes(choice)) {
-        const slot = inferSlot(header);
-        if (slot !== undefined) target.slot = slot;
-      }
-      columns[header] = target;
-      const d = answers.dnc;
-      dncColumnFlags[header] = d?.type === 'noul' ? d.noul : 0;
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(MAX_IN_FLIGHT, headers.length) }, worker));
-  return { columns, dncColumnFlags };
+/** phone_dnc / phone_type columns bound to a slot no phone column uses. */
+export function orphanSlotColumns(mapping: VendorMapping): string[] {
+  const phoneSlots = new Set(
+    Object.entries(mapping.columns)
+      .filter(([, t]) => t.field === 'phone')
+      .map(([h, t]) => effectiveSlot(h, t)),
+  );
+  return Object.entries(mapping.columns)
+    .filter(([h, t]) => {
+      if (t.field !== 'phone_dnc' && t.field !== 'phone_type') return false;
+      const slot = effectiveSlot(h, t);
+      return slot !== 0 && !phoneSlots.has(slot);
+    })
+    .map(([h]) => h);
 }
