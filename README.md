@@ -26,7 +26,7 @@ Commands: `pnpm test` (Vitest), `pnpm build`, `pnpm lint`.
 | Variable | Purpose |
 |----------|---------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable (or legacy anon) key. Never a service-role key |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public anon/publishable key. Never a service-role key. `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` is accepted as an alias |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only secret key; used by Twilio webhooks and background work |
 | `ALLOWED_EMAIL` | The single email allowed to sign in (case-insensitive) |
 | `APP_URL` | Public base URL, used for Twilio webhook URLs |
@@ -35,6 +35,10 @@ Commands: `pnpm test` (Vitest), `pnpm build`, `pnpm lint`.
 | `TWILIO_TWIML_APP_SID` | TwiML App SID used by the browser Device |
 | `TWILIO_CALLER_ID` | The purchased 804 number in E.164 |
 | `ANTHROPIC_API_KEY` | Coaching and call summaries |
+| `DANIEL_CELL` | Cell number (E.164) inbound calls forward to (later task) |
+| `DEEPGRAM_API_KEY` | Live call transcription (later task) |
+| `TYPESAFE_API_KEY` | TypeSafe (Jev) coaching classifier (later task) |
+| `REALTYAPI_KEY` | RealtyAPI.io sold comps for CMAs (later task) |
 
 ## One-time manual steps (Twilio, spec section 6)
 
