@@ -200,3 +200,8 @@ export function mergeLead(existing: LeadRow, incoming: ImportedLead): Partial<Le
   }
   return patch as Partial<LeadRow>;
 }
+
+/** Re-import merge for a phone's vendor DNC flag: a do_not_call is never downgraded. */
+export function mergeVendorDnc(existing: VendorDnc, incoming: VendorDnc): VendorDnc {
+  return existing === 'do_not_call' || incoming === 'do_not_call' ? 'do_not_call' : incoming;
+}

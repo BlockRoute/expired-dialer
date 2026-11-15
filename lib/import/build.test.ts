@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLeads, mergeLead, mostCommonScrubDate } from './build';
+import { buildLeads, mergeLead, mergeVendorDnc, mostCommonScrubDate } from './build';
 import type { VendorMapping } from './mapping';
 import type { ImportedLead } from './build';
 import type { LeadRow } from '../db/types';
@@ -111,5 +111,14 @@ describe('mergeLead', () => {
     expect('owner_full_name' in patch).toBe(false);
     expect('id' in patch).toBe(false);
     expect('normalized_address' in patch).toBe(false);
+  });
+});
+
+describe('mergeVendorDnc', () => {
+  it('never downgrades do_not_call, otherwise takes incoming', () => {
+    expect(mergeVendorDnc('do_not_call', 'callable')).toBe('do_not_call');
+    expect(mergeVendorDnc('callable', 'do_not_call')).toBe('do_not_call');
+    expect(mergeVendorDnc('unknown', 'callable')).toBe('callable');
+    expect(mergeVendorDnc('callable', 'unknown')).toBe('unknown');
   });
 });

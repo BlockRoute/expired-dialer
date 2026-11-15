@@ -4,9 +4,9 @@ import { requireUser } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { jev } from '@/lib/typesafe/client';
 import { dncValueChoice } from '@/lib/typesafe/questions';
-import { mergeLead, type ImportedLead } from '@/lib/import/build';
+import { mergeLead, mergeVendorDnc, type ImportedLead } from '@/lib/import/build';
 import { suggestMapping, type ColumnTarget, type DncValue, type VendorMapping } from '@/lib/import/mapping';
-import type { ImportBatchRow, LeadRow } from '@/lib/db/types';
+import type { ImportBatchRow, LeadRow, PhoneRow } from '@/lib/db/types';
 
 const CHUNK = 500;
 const LOOKUP_CHUNK = 100; // `in (...)` filters travel in the URL
@@ -178,28 +178,50 @@ export async function applyImport(
       const now = new Date().toISOString();
       const rows = toUpdate.map((l) => {
         const row = existing.get(l.normalizedAddress)!;
-        return { ...row, ...mergeLead(row, l), updated_at: now };
+        return { ...row, ...mergeLead(row, l), batch_id: batchId, updated_at: now };
       });
       const { error } = await supabase.from('leads').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
       totals.updated += toUpdate.length;
     }
 
-    // 4. Phones: existing (lead_id, number) rows are left exactly as they are.
-    const phoneRows = batch.flatMap((l) =>
-      l.phones.map((p) => ({
-        lead_id: idByAddress.get(l.normalizedAddress) as string,
-        number: p.number,
-        position: p.position,
-        line_type: p.lineType,
-        vendor_dnc: p.vendorDnc,
-      })),
-    );
-    for (const part of chunks(phoneRows, CHUNK)) {
-      const { data, error } = await supabase
-        .from('phones')
-        .upsert(part, { onConflict: 'lead_id,number', ignoreDuplicates: true })
-        .select('vendor_dnc');
+    // 4. Phones. A phone's scrub coverage is the last batch that listed it:
+    // new phones get this batch; listed-again phones get this batch and a merged
+    // vendor_dnc (never downgraded from do_not_call). status is never touched.
+    // Phones missing from this file keep their old batch_id.
+    const leadIds = [...new Set(batch.map((l) => idByAddress.get(l.normalizedAddress) as string))];
+    const existingPhones = new Map<string, PhoneRow>();
+    for (const ids of chunks(leadIds, LOOKUP_CHUNK)) {
+      const { data, error } = await supabase.from('phones').select('*').in('lead_id', ids);
+      if (error) throw new Error(error.message);
+      for (const p of (data ?? []) as PhoneRow[]) existingPhones.set(`${p.lead_id}|${p.number}`, p);
+    }
+    const newPhones: Record<string, unknown>[] = [];
+    const updatedPhones: PhoneRow[] = [];
+    for (const l of batch) {
+      const leadId = idByAddress.get(l.normalizedAddress) as string;
+      for (const p of l.phones) {
+        const old = existingPhones.get(`${leadId}|${p.number}`);
+        if (old) {
+          updatedPhones.push({ ...old, vendor_dnc: mergeVendorDnc(old.vendor_dnc, p.vendorDnc), batch_id: batchId });
+        } else {
+          newPhones.push({
+            lead_id: leadId,
+            number: p.number,
+            position: p.position,
+            line_type: p.lineType,
+            vendor_dnc: p.vendorDnc,
+            batch_id: batchId,
+          });
+        }
+      }
+    }
+    for (const part of chunks(updatedPhones, CHUNK)) {
+      const { error } = await supabase.from('phones').upsert(part, { onConflict: 'id' });
+      if (error) throw new Error(error.message);
+    }
+    for (const part of chunks(newPhones, CHUNK)) {
+      const { data, error } = await supabase.from('phones').insert(part).select('vendor_dnc');
       if (error) throw new Error(error.message);
       totals.phonesAdded += data?.length ?? 0;
       totals.dncPhones += (data ?? []).filter((r) => r.vendor_dnc === 'do_not_call').length;

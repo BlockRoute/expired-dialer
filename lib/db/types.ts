@@ -73,6 +73,7 @@ export type PhoneRow = {
   line_type: string | null;
   vendor_dnc: VendorDnc;
   status: PhoneStatus;
+  batch_id: string | null;
   created_at: string;
 };
 
