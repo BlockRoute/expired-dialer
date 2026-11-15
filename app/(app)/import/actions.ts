@@ -10,7 +10,6 @@ import type { ImportBatchRow, LeadRow, PhoneRow } from '@/lib/db/types';
 
 const CHUNK = 500;
 const LOOKUP_CHUNK = 100; // `in (...)` filters travel in the URL
-const SAMPLE_ROWS = 25;
 
 function chunks<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -59,12 +58,12 @@ export async function saveMapping(mapping: VendorMapping): Promise<void> {
 
 export async function suggestMappingAction(
   headers: string[],
-  rows: Record<string, string>[],
+  samples: Record<string, string[]>,
   only?: string[],
 ): Promise<SuggestResult> {
   await requireUser();
   try {
-    const out = await suggestMapping(headers, rows.slice(0, SAMPLE_ROWS), only);
+    const out = await suggestMapping(headers, samples, only);
     return { ok: true, ...out };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -162,7 +161,8 @@ export async function applyImport(
       totals.created += toInsert.length;
     }
 
-    // 3. Existing leads: listing fields only (mergeLead never touches status).
+    // 3. Existing leads: listing fields, plus out_of_state when the file now shows a non-VA state
+    //    (mergeLead never changes dnc/dead/appointment status).
     if (toUpdate.length) {
       const now = new Date().toISOString();
       const rows = toUpdate.map((l) => {

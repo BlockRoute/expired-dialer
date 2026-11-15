@@ -6,12 +6,11 @@ import { FIELDS, PHONE_FIELDS, inferSlot, type ColumnTarget, type DncValue, type
 // Server-only: imports the Jev client. Import from server actions only.
 
 const MAX_IN_FLIGHT = 6;
-const SAMPLE_COUNT = 5;
 
 /** One Jev request per column (or only `only`) (field Choice + DNC-column Noul), max 6 in flight. */
 export async function suggestMapping(
   headers: string[],
-  rows: Record<string, string>[],
+  samples: Record<string, string[]>,
   only?: string[],
 ): Promise<{
   columns: Record<string, ColumnTarget & { confidence: number }>;
@@ -26,14 +25,10 @@ export async function suggestMapping(
   const worker = async () => {
     while (next < targets.length) {
       const header = targets[next++];
-      const samples = rows
-        .map((r) => r[header] ?? '')
-        .filter((v) => v !== '')
-        .slice(0, SAMPLE_COUNT);
       const state = {
         file: 'Expired-listing lead export purchased from a lead vendor',
         all_column_headers: headers,
-        column: { header, sample_values: samples },
+        column: { header, sample_values: samples[header] ?? [] },
       };
       const answers: JevAnswers = await jev(state, questions);
       const f = answers.field;

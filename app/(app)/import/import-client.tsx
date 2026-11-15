@@ -7,6 +7,7 @@ import {
   PHONE_FIELDS,
   inferSlot,
   orphanSlotColumns,
+  sampleValues,
   unmappedDncColumns,
   type ColumnTarget,
   type DncValue,
@@ -102,7 +103,7 @@ export function ImportClient() {
         if (fresh.length > 0) {
           // New or renamed headers must be classified, including the DNC check.
           setBusy('Checking new columns with Jev...');
-          const s = await suggestMappingAction(headers, rows, fresh);
+          const s = await suggestMappingAction(headers, sampleValues(headers, rows), fresh);
           if (s.ok) {
             for (const [h, t] of Object.entries(s.columns)) nextColumns[h] = { field: t.field, slot: t.slot };
             setConfidence(Object.fromEntries(Object.entries(s.columns).map(([h, t]) => [h, t.confidence])));
@@ -113,7 +114,7 @@ export function ImportClient() {
         }
       } else {
         setBusy('Asking Jev to map the columns...');
-        const s = await suggestMappingAction(headers, rows);
+        const s = await suggestMappingAction(headers, sampleValues(headers, rows));
         if (s.ok) {
           nextColumns = Object.fromEntries(
             Object.entries(s.columns).map(([h, t]) => [h, { field: t.field, slot: t.slot }]),

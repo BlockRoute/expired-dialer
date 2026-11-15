@@ -89,3 +89,21 @@ export function orphanSlotColumns(mapping: VendorMapping): string[] {
     })
     .map(([h]) => h);
 }
+
+const SAMPLE_COUNT = 5;
+
+/**
+ * First 5 non-blank values per header, as a plain object (own keys, even for a
+ * header named __proto__), safe to pass to a server action.
+ */
+export function sampleValues(headers: string[], rows: Record<string, string>[]): Record<string, string[]> {
+  return Object.fromEntries(
+    headers.map((h) => [
+      h,
+      rows
+        .map((r) => r[h] ?? '')
+        .filter((v) => v !== '')
+        .slice(0, SAMPLE_COUNT),
+    ]),
+  );
+}

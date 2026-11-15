@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const jevMock = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/typesafe/client', () => ({ jev: jevMock }));
 
+import { sampleValues } from './mapping';
 import { suggestMapping } from './suggest';
 
 describe('suggestMapping', () => {
@@ -26,7 +27,7 @@ describe('suggestMapping', () => {
     });
     const headers = ['Ph2 Status', ...Array.from({ length: 9 }, (_, i) => `Phone ${i}`)];
     const rows = Array.from({ length: 8 }, (_, i) => Object.fromEntries(headers.map((h) => [h, `v${i}`])));
-    const out = await suggestMapping(headers, rows);
+    const out = await suggestMapping(headers, sampleValues(headers, rows));
 
     expect(jevMock).toHaveBeenCalledTimes(10);
     expect(peak).toBeLessThanOrEqual(6);
@@ -47,7 +48,7 @@ describe('suggestMapping only', () => {
       field: { type: 'choice', choice: 'ignore', confidence: 0.5, probabilities: {} },
       dnc: { type: 'noul', noul: 0 },
     });
-    const out = await suggestMapping(['A', 'B', 'C'], [{ A: '1', B: '2', C: '3' }], ['B']);
+    const out = await suggestMapping(['A', 'B', 'C'], sampleValues(['A', 'B', 'C'], [{ A: '1', B: '2', C: '3' }]), ['B']);
     expect(jevMock).toHaveBeenCalledTimes(1);
     expect(jevMock.mock.calls[0][0].all_column_headers).toEqual(['A', 'B', 'C']);
     expect(Object.keys(out.columns)).toEqual(['B']);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveSlot, inferSlot, orphanSlotColumns, unmappedDncColumns, type VendorMapping } from './mapping';
+import { parseSheet } from './parse';
+import { effectiveSlot, sampleValues, inferSlot, orphanSlotColumns, unmappedDncColumns, type VendorMapping } from './mapping';
 
 describe('inferSlot', () => {
   it('takes the first integer in the header', () => {
@@ -42,5 +43,22 @@ describe('slots', () => {
       dncValues: {},
     };
     expect(orphanSlotColumns(m)).toEqual(['DNC 2023 list']);
+  });
+});
+
+describe('sampleValues', () => {
+  it('returns a plain object of up to 5 non-blank values per header, __proto__ as an own key', () => {
+    const csv = Buffer.from('__proto__,Phone\n,1\nx,2\ny,3\nz,4\nw,5\nv,6\nu,7\n');
+    const { headers, rows } = parseSheet(
+      csv.buffer.slice(csv.byteOffset, csv.byteOffset + csv.byteLength) as ArrayBuffer,
+      'x.csv',
+    );
+    expect(Object.getPrototypeOf(rows[0])).toBeNull(); // internal rows stay null-prototype
+    const samples = sampleValues(headers, rows);
+    expect(Object.getPrototypeOf(samples)).toBe(Object.prototype);
+    expect(Object.keys(samples)).toEqual(['__proto__', 'Phone']);
+    expect(Object.getOwnPropertyDescriptor(samples, '__proto__')?.value).toEqual(['x', 'y', 'z', 'w', 'v']);
+    expect(samples.Phone).toEqual(['1', '2', '3', '4', '5']);
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
   });
 });
