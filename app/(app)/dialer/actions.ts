@@ -1,8 +1,9 @@
 'use server';
 
 import { requireUser } from '@/lib/auth';
+import { closeLeadRound } from '@/lib/dialer/close-round';
 import { hasNextCallablePhone } from '@/lib/dialer/flow';
-import { applyOutcome, closeRoundPatch, type Advance } from '@/lib/outcomes';
+import { applyOutcome, type Advance } from '@/lib/outcomes';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { CallRow, ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '@/lib/db/types';
 
@@ -90,9 +91,8 @@ export async function saveOutcome(
 }
 
 /**
- * Daniel left a lead after an outcome on an earlier phone (next_phone) without
- * working the rest: the visit still counts as a round, so the cooldown and the
- * round cap apply.
+ * Daniel left a lead (skip / Next) while its visit may be open: close the round.
+ * The server only acts if the voice route opened a visit, and only once.
  */
 export async function closeRound(leadId: string): Promise<{ ok: boolean; error?: string }> {
   await requireUser();
@@ -104,10 +104,13 @@ export async function closeRound(leadId: string): Promise<{ ok: boolean; error?:
   const lead = leadRes.data as LeadRow | null;
   const settings = settingsRes.data as SettingsRow | null;
   if (leadRes.error || settingsRes.error || !lead || !settings) return { ok: false, error: 'Could not load the lead.' };
-  const patch = closeRoundPatch(lead, settings, new Date());
-  if (Object.keys(patch).length === 0) return { ok: true };
-  const { error } = await supabase.from('leads').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', lead.id);
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (!lead.visit_open_at) return { ok: true };
+  try {
+    await closeLeadRound(supabase, lead, settings, new Date());
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not close the round.' };
+  }
+  return { ok: true };
 }
 
 /** The `calls.id` the voice route created for a Twilio parent CallSid, once it exists. */

@@ -1,3 +1,4 @@
+import { closeLeadRound } from '@/lib/dialer/close-round';
 import { callablePhones, type FlowLead } from '@/lib/dialer/flow';
 import { orderQueue } from '@/lib/queue';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
@@ -8,6 +9,20 @@ export const dynamic = 'force-dynamic';
 
 export default async function DialerPage() {
   const supabase = await createSupabaseServerClient();
+
+  // A reload mid-visit counts the round (fail closed): close every open visit before building the queue.
+  const [openRes, openSettingsRes] = await Promise.all([
+    supabase.from('leads').select('*').not('visit_open_at', 'is', null),
+    supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
+  ]);
+  if (openRes.error || openSettingsRes.error) throw new Error((openRes.error ?? openSettingsRes.error)!.message);
+  if (openSettingsRes.data) {
+    const closeAt = new Date();
+    for (const open of (openRes.data ?? []) as LeadRow[]) {
+      await closeLeadRound(supabase, open, openSettingsRes.data as SettingsRow, closeAt);
+    }
+  }
+
   const [leadsRes, callbacksRes, batchesRes, dncRes, settingsRes] = await Promise.all([
     supabase.from('leads').select('*, phones(*)').not('status', 'in', '(dnc,dead,appointment,out_of_state)'),
     supabase.from('callbacks').select('lead_id, due_at').is('done_at', null),

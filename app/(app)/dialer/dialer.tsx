@@ -8,7 +8,6 @@ import {
   canSaveOutcome,
   canSkip,
   currentLead,
-  needsRoundClose,
   currentPhone,
   flowReducer,
   initialFlow,
@@ -255,7 +254,8 @@ export function Dialer(props: {
         if (!canSkip(flow)) return;
         setMessage(null);
         const lead = currentLead(flow);
-        if (lead && needsRoundClose(flow)) {
+        if (lead) {
+          // The server closes the round only if a visit is open for this lead.
           try {
             const result = await closeRound(lead.lead.id);
             if (!result.ok) {

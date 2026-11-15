@@ -42,6 +42,7 @@ export type LeadRow = {
   status: LeadStatus;
   attempt_rounds: number;
   next_eligible_at: string | null;
+  visit_open_at: string | null;
   normalized_address: string | null;
   mailing_state: string | null;
   owner_full_name: string | null;

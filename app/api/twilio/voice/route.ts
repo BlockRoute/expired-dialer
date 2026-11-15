@@ -79,6 +79,14 @@ export async function POST(request: Request) {
       .single();
     if (insertError || !call) throw new Error('call insert failed');
 
+    // Open the lead's visit (once): from here a skip or reload still counts the round.
+    const { error: visitError } = await db
+      .from('leads')
+      .update({ visit_open_at: new Date().toISOString() })
+      .eq('id', lead.id)
+      .is('visit_open_at', null);
+    if (visitError) throw new Error('visit open failed');
+
     return xml(
       dialTwiml({ to: phone.number, callerId, callId: call.id, ringTimeoutS: settings.ring_timeout_s }),
     );

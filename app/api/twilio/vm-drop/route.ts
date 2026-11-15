@@ -29,6 +29,10 @@ export const POST = withApiErrors(async (request) => {
   const settings = settingsRes.data as SettingsRow | null;
   if (!call) return NextResponse.json({ ok: false, error: 'Call not found.' }, { status: 404 });
 
+  if (call.outcome_saved_at) {
+    return NextResponse.json({ ok: false, error: 'An outcome was already saved for this call.' }, { status: 409 });
+  }
+
   const drop = settings?.voicemail_drops.find((d) => d.id === body.dropId);
   if (!drop) return NextResponse.json({ ok: false, error: 'Voicemail drop not found.' }, { status: 404 });
   if (!call.twilio_child_sid || !call.twilio_parent_sid) {
@@ -47,7 +51,8 @@ export const POST = withApiErrors(async (request) => {
     .from('calls')
     // outcome_saved_at stays null: the dialer's saveOutcome applies the lead effects exactly once.
     .update({ outcome: 'left_vm' })
-    .eq('id', call.id);
+    .eq('id', call.id)
+    .is('outcome_saved_at', null);
   if (updateError) throw new Error('Database request failed');
 
   // Best-effort: the Dial action usually hangs the parent up first, so this may be rejected.

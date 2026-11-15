@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { applyOutcome } from '../outcomes';
-import { callablePhones, hasNextCallablePhone, needsRoundClose, currentLead, currentPhone, dialablePhones, flowReducer, initialFlow, canDial, canSaveOutcome, canSkip, type FlowAction, type FlowLead, type FlowState } from './flow';
+import { callablePhones, hasNextCallablePhone, currentLead, currentPhone, dialablePhones, flowReducer, initialFlow, canDial, canSaveOutcome, canSkip, type FlowAction, type FlowLead, type FlowState } from './flow';
 import type { ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '../db/types';
 
 const NOW = new Date('2026-11-16T17:00:00Z');
@@ -169,14 +169,25 @@ describe('callable phones (phone-level guardrails)', () => {
   });
 });
 
-describe('needsRoundClose', () => {
-  it('is true only when idle on a later phone, i.e. after a next_phone outcome', () => {
-    const q = [entry('L1', [mkPhone('P1', 'L1', 1), mkPhone('P2', 'L1', 2)])];
-    let s = run(initialFlow, { type: 'load', queue: q });
-    expect(needsRoundClose(s)).toBe(false);
+describe('skipping after an earlier outcome on the lead', () => {
+  const q = () => [
+    entry('L1', [mkPhone('P1', 'L1', 1), mkPhone('P2', 'L1', 2)]),
+    entry('L2', [mkPhone('P3', 'L2', 1)]),
+  ];
+  it('idle on phone 2 after a next_phone outcome can be skipped', () => {
+    let s = run(initialFlow, { type: 'load', queue: q() });
     s = run(s, { type: 'dial' }, { type: 'accepted' }, { type: 'call_id', callId: 'C1' }, { type: 'disconnected' }, { type: 'saved', advance: 'next_phone' });
-    expect(needsRoundClose(s)).toBe(true);
-    expect(needsRoundClose(run(s, { type: 'dial' }))).toBe(false);
-    expect(needsRoundClose(initialFlow)).toBe(false);
+    expect(canSkip(s)).toBe(true);
+    expect(currentLead(run(s, { type: 'skip' }))?.lead.id).toBe('L2');
+  });
+  it('phone 2 blocked by the server (ended, no call id) can be skipped too', () => {
+    let s = run(initialFlow, { type: 'load', queue: q() });
+    s = run(s, { type: 'dial' }, { type: 'accepted' }, { type: 'call_id', callId: 'C1' }, { type: 'disconnected' }, { type: 'saved', advance: 'next_phone' });
+    s = run(s, { type: 'dial' }, { type: 'disconnected' });
+    expect(s.phoneIndex).toBe(1);
+    expect(s.callState).toBe('ended');
+    expect(s.callId).toBeNull();
+    expect(canSkip(s)).toBe(true);
+    expect(currentLead(run(s, { type: 'skip' }))?.lead.id).toBe('L2');
   });
 });

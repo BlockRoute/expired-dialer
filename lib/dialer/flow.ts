@@ -80,10 +80,6 @@ export const canSaveOutcome = (s: FlowState) =>
 export const canSkip = (s: FlowState) =>
   currentLead(s) !== null && (s.callState === 'idle' || (s.callState === 'ended' && s.callId === null));
 
-/** Idle on a later phone: an outcome was already logged this visit, so leaving the lead must close its round. */
-export const needsRoundClose = (s: FlowState) =>
-  currentLead(s) !== null && s.callState === 'idle' && s.phoneIndex > 0;
-
 const nextLead = (s: FlowState): FlowState => ({
   queue: s.queue.slice(1),
   phoneIndex: 0,
