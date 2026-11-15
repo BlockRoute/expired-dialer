@@ -38,17 +38,23 @@ export const POST = withApiErrors(async (request) => {
   const { data: signed, error: signError } = await db.storage
     .from('vm-drops')
     .createSignedUrl(drop.path, SIGNED_URL_TTL_S);
-  if (signError || !signed) throw new Error('Database request failed');
+  if (signError || !signed) throw new Error('Voicemail drop URL could not be signed');
 
   const twilio = twilioRestClient();
   await twilio.calls(call.twilio_child_sid).update({ twiml: playTwiml(signed.signedUrl) });
-  await twilio.calls(call.twilio_parent_sid).update({ status: 'completed' });
-
+  // The child redirect is the commit point: the lead now hears the voicemail.
   const { error: updateError } = await db
     .from('calls')
     .update({ outcome: 'left_vm', outcome_saved_at: new Date().toISOString() })
     .eq('id', call.id);
   if (updateError) throw new Error('Database request failed');
+
+  // Best-effort: the Dial action usually hangs the parent up first, so this may be rejected.
+  try {
+    await twilio.calls(call.twilio_parent_sid).update({ status: 'completed' });
+  } catch (error) {
+    console.error('vm-drop parent hangup failed', error instanceof Error ? error.message : 'unknown');
+  }
 
   return NextResponse.json({ ok: true });
 });
