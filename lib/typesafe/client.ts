@@ -1,3 +1,6 @@
+// Server-only: reads TYPESAFE_API_KEY. Fail loudly if bundled into a browser.
+if (typeof window !== 'undefined') throw new Error('lib/typesafe/client is server-only');
+
 const ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 const MODEL = 'jev-latest';
 const BACKOFF_MS = [250, 500, 1000];
@@ -48,6 +51,7 @@ export async function jev(
       throw new JevError(`TypeSafe request failed: ${(e as Error).message}`, 0);
     }
     if ((res.status === 429 || res.status === 529) && attempt < BACKOFF_MS.length) {
+      await res.body?.cancel();
       await sleep(BACKOFF_MS[attempt]);
       continue;
     }

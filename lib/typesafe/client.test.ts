@@ -54,4 +54,38 @@ describe('jev client', () => {
       questions,
     });
   });
+
+  it('retries 529 then resolves', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(res(529, { error: 'overloaded' }))
+      .mockResolvedValueOnce(res(200, OK));
+    vi.stubGlobal('fetch', fetchMock);
+    await jev({}, { dnc: { type: 'noul', instructions: 'x' } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws JevError 429 after retries are exhausted (4 calls)', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => res(429, { error: 'slow' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const err = await jev({}, { q: { type: 'noul', instructions: 'x' } }).catch((e) => e);
+    expect(err).toBeInstanceOf(JevError);
+    expect(err.status).toBe(429);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('cancels the body of a retried response', async () => {
+    const retried = res(429, {});
+    const cancel = vi.spyOn(retried.body!, 'cancel');
+    const fetchMock = vi.fn().mockResolvedValueOnce(retried).mockResolvedValueOnce(res(200, OK));
+    vi.stubGlobal('fetch', fetchMock);
+    await jev({}, { dnc: { type: 'noul', instructions: 'x' } });
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it('throws at import time when a window exists (server-only guard)', async () => {
+    vi.resetModules();
+    vi.stubGlobal('window', {});
+    await expect(import('./client')).rejects.toThrow('server-only');
+  });
 });
