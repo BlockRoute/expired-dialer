@@ -17,6 +17,7 @@ import { checkDial, type BlockReason } from '@/lib/guardrails';
 import { outcomeLabel, PRIMARY_OUTCOMES } from '@/lib/outcomes';
 import type { ImportBatchRow, SettingsRow } from '@/lib/db/types';
 import { closeRound, lookupCallId, saveOutcome } from './actions';
+import { useTranscription } from './use-transcription';
 
 type DeviceStatus = 'loading' | 'ready' | 'error';
 
@@ -66,6 +67,8 @@ export function Dialer(props: {
 
   const deviceRef = useRef<Device | null>(null);
   const callRef = useRef<Call | null>(null);
+  const [activeCall, setActiveCall] = useState<Call | null>(null);
+  const transcription = useTranscription(activeCall, flow.callId);
   /** True while a save, voicemail drop or round close is running; a ref so a fast second keypress sees it before any re-render. */
   const busyRef = useRef(false);
 
@@ -144,6 +147,7 @@ export function Dialer(props: {
       call.on('accept', async () => {
         if (!current()) return;
         dispatch({ type: 'accepted' });
+        setActiveCall(call);
         const sid = call.parameters.CallSid;
         for (let attempt = 0; attempt < 6 && current(); attempt++) {
           const callId = sid ? await lookupCallId(sid) : null;
@@ -157,6 +161,7 @@ export function Dialer(props: {
       const ended = () => {
         if (!current()) return;
         callRef.current = null;
+        setActiveCall(null);
         dispatch({ type: 'disconnected' });
       };
       call.on('disconnect', ended);
@@ -209,6 +214,7 @@ export function Dialer(props: {
           return false;
         }
         callRef.current = null;
+        setActiveCall(null);
         dispatch({ type: 'saved', advance: result.advance });
         setNote('');
         setCallbackAt('');
@@ -383,6 +389,26 @@ export function Dialer(props: {
               <span className="text-sm text-neutral-600">No call was logged. Press N to skip this lead.</span>
             )}
           </div>
+        </section>
+      )}
+
+      {lead && (flow.callState === 'in_call' || flow.callState === 'ended') && (
+        <section className="space-y-2 rounded border border-neutral-300 p-4" aria-label="Live transcript">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-sm font-semibold">Transcript</h2>
+            {transcription.status === 'paused' && (
+              <span className="text-xs text-amber-800">transcription paused</span>
+            )}
+          </div>
+          <ul className="max-h-64 space-y-1 overflow-y-auto text-sm" data-testid="transcript">
+            {transcription.segments.length === 0 && <li className="text-neutral-500">Listening...</li>}
+            {transcription.segments.map((s, i) => (
+              <li key={i} className={s.final ? '' : 'text-neutral-400'}>
+                <span className="mr-2 font-medium">{s.speaker === 'rep' ? 'Rep' : 'Owner'}</span>
+                {s.text}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
