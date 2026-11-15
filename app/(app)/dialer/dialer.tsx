@@ -17,6 +17,7 @@ import { checkDial, type BlockReason } from '@/lib/guardrails';
 import { outcomeLabel, PRIMARY_OUTCOMES } from '@/lib/outcomes';
 import type { ImportBatchRow, SettingsRow } from '@/lib/db/types';
 import { closeRound, lookupCallId, saveOutcome } from './actions';
+import { CoachPanel } from './coach-panel';
 import { useTranscription } from './use-transcription';
 
 type DeviceStatus = 'loading' | 'ready' | 'error';
@@ -69,6 +70,16 @@ export function Dialer(props: {
   const callRef = useRef<Call | null>(null);
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   const transcription = useTranscription(activeCall, flow.callId);
+  // DNC request detected and its override are tied to the call they happened on.
+  const [dncFor, setDncFor] = useState<string | null>(null);
+  const [overrideFor, setOverrideFor] = useState<string | null>(null);
+  const dncRequested = flow.callId !== null && dncFor === flow.callId;
+  const dncOverridden = flow.callId !== null && overrideFor === flow.callId;
+  const flowCallIdRef = useRef(flow.callId);
+  useEffect(() => {
+    flowCallIdRef.current = flow.callId;
+  });
+  const onDncRequest = useCallback(() => setDncFor(flowCallIdRef.current), []);
   /** True while a save, voicemail drop or round close is running; a ref so a fast second keypress sees it before any re-render. */
   const busyRef = useRef(false);
 
@@ -195,6 +206,10 @@ export function Dialer(props: {
   const persist = useCallback(
     async (outcome: string): Promise<boolean> => {
       if (!canSaveOutcome(flow) || !flow.callId) return false;
+      if (dncRequested && !dncOverridden && outcome !== 'dnc') {
+        setMessage('The owner asked not to be called. Mark DNC, or click Override to save another outcome.');
+        return false;
+      }
       let callbackIso: string | undefined;
       if (outcome === 'callback_requested') {
         const when = callbackAt ? new Date(callbackAt) : null;
@@ -224,7 +239,7 @@ export function Dialer(props: {
         return false;
       }
     },
-    [flow, note, callbackAt],
+    [flow, note, callbackAt, dncRequested, dncOverridden],
   );
 
   const submit = useCallback((outcome: string) => exclusive(async () => void (await persist(outcome))), [exclusive, persist]);
@@ -392,6 +407,34 @@ export function Dialer(props: {
         </section>
       )}
 
+      {lead && dncRequested && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+          <span className="font-medium">Owner asked not to be called — mark Do Not Call?</span>
+          <button
+            type="button"
+            className={`${btn} bg-red-700 text-white hover:bg-red-800`}
+            disabled={!outcomeButtonsEnabled}
+            onClick={() => void submit('dnc')}
+          >
+            Mark DNC
+          </button>
+          {!dncOverridden && (
+            <button type="button" className={btn} onClick={() => setOverrideFor(flow.callId)}>
+              Override
+            </button>
+          )}
+        </div>
+      )}
+
+      {lead && flow.callState === 'in_call' && (
+        <CoachPanel
+          callId={flow.callId}
+          leadId={lead.lead.id}
+          onOwnerTurn={transcription.onOwnerTurn}
+          onDncRequest={onDncRequest}
+        />
+      )}
+
       {lead && (flow.callState === 'in_call' || flow.callState === 'ended') && (
         <section className="space-y-2 rounded border border-neutral-300 p-4" aria-label="Live transcript">
           <div className="flex items-baseline justify-between">
@@ -419,7 +462,9 @@ export function Dialer(props: {
               <button
                 key={o}
                 type="button"
-                className={btn}
+                className={
+                  dncRequested && !dncOverridden && o === 'dnc' ? `${btn} border-red-600 bg-red-50 ring-1 ring-red-600` : btn
+                }
                 disabled={!outcomeButtonsEnabled}
                 aria-keyshortcuts={String(PRIMARY_OUTCOMES.indexOf(o) + 1)}
                 onClick={() => void submit(o)}

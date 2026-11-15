@@ -5,6 +5,7 @@ import type { Call } from '@twilio/voice-sdk';
 import { createDownsampler, floatToPcm16 } from '@/lib/audio/pcm16';
 import { buildOwnerTurn, type OwnerTurn, type Segment } from '@/lib/transcript';
 import { createOutbox } from '@/lib/transcript-outbox';
+import { createOwnerTurnTrigger } from '@/lib/coach/trigger';
 
 export type { OwnerTurn, Segment };
 export type TranscriptionStatus = 'idle' | 'live' | 'paused';
@@ -72,6 +73,7 @@ export function useTranscription(call: Call | null, callId: string | null = null
     const channelState: Partial<Record<Speaker, ChannelState>> = {};
     const sockets = new Set<WebSocket>();
     let turnId = 0;
+    const trigger = createOwnerTurnTrigger();
     let ctx: AudioContext | null = null;
 
     const publish = () => setSegments([...finals, ...Object.values(interim).filter((s): s is Segment => !!s)]);
@@ -84,7 +86,22 @@ export function useTranscription(call: Call | null, callId: string | null = null
 
     const flushTimer = setInterval(() => void outbox.flush(sessionCallId()), FLUSH_MS);
 
+    /** At most once per owner turn (it ends at the next rep final); skipped while the owner has said nothing. */
+    const fireOwnerTurn = () => {
+      if (closed || !trigger.ready()) return;
+      const turn = buildOwnerTurn(finals, turnId);
+      if (!turn.ownerSaid) return;
+      trigger.markFired();
+      turnId++;
+      try {
+        ownerTurnCb.current?.(turn);
+      } catch {
+        // a coaching callback must never break transcription
+      }
+    };
+
     const handleResult = (speaker: Speaker, offset: number, msg: unknown) => {
+      sessionCallId(); // keep the bound call id fresh between flush ticks
       const m = msg as {
         type?: string;
         is_final?: boolean;
@@ -93,6 +110,10 @@ export function useTranscription(call: Call | null, callId: string | null = null
         duration?: number;
         channel?: { alternatives?: { transcript?: string }[] };
       };
+      if (m.type === 'UtteranceEnd') {
+        if (speaker === 'owner') fireOwnerTurn();
+        return;
+      }
       if (m.type !== 'Results') return;
       const text = (m.channel?.alternatives?.[0]?.transcript ?? '').trim();
       const tStart = offset + (m.start ?? 0);
@@ -116,13 +137,8 @@ export function useTranscription(call: Call | null, callId: string | null = null
       delete interim[speaker];
       finals.push({ speaker, text, tStart, tEnd, final: true });
       publish();
-      if (speaker === 'owner' && m.speech_final) {
-        try {
-          ownerTurnCb.current?.(buildOwnerTurn(finals, turnId++));
-        } catch {
-          // a coaching callback must never break transcription
-        }
-      }
+      if (speaker === 'rep') trigger.onRepFinal();
+      else if (m.speech_final) fireOwnerTurn();
     };
 
     const openChannel = (speaker: Speaker, stream: MediaStream, audioCtx: AudioContext, node: AudioWorkletNode) => {

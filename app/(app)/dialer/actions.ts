@@ -5,7 +5,7 @@ import { closeLeadRound } from '@/lib/dialer/close-round';
 import { hasNextCallablePhone } from '@/lib/dialer/flow';
 import { applyOutcome, type Advance } from '@/lib/outcomes';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import type { CallRow, ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '@/lib/db/types';
+import type { CallRow, CoachAction, ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '@/lib/db/types';
 
 export type SaveOutcomeResult = { ok: true; advance: Advance } | { ok: false; error: string };
 
@@ -119,4 +119,13 @@ export async function lookupCallId(callSid: string): Promise<string | null> {
   const supabase = await createSupabaseServerClient();
   const { data } = await supabase.from('calls').select('id').eq('twilio_parent_sid', callSid).maybeSingle();
   return (data as { id: string } | null)?.id ?? null;
+}
+
+/** Records what Daniel did with a coaching card (used, dismissed, or switched to the runner-up). */
+export async function recordCoachAction(coachCardId: string, action: CoachAction): Promise<boolean> {
+  await requireUser();
+  if (!['used', 'dismissed', 'switched'].includes(action)) return false;
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from('coach_cards').update({ action }).eq('id', coachCardId);
+  return !error;
 }
