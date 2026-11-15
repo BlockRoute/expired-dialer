@@ -14,6 +14,7 @@ export const dynamic = 'force-dynamic';
 
 const FALLBACK_MODEL = 'claude-haiku-5-5';
 const MAX_SAY_WORDS = 20;
+const FALLBACK_TIMEOUT_MS = 2500;
 
 const bodySchema = z.object({
   callId: z.uuid(),
@@ -39,12 +40,29 @@ const FALLBACK_SYSTEM = [
 
 const truncateWords = (s: string, n: number) => s.trim().split(/\s+/).filter(Boolean).slice(0, n).join(' ');
 
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
+
 async function claudeCard(ownerSaid: string, transcriptSoFar: string, firstName: string | null): Promise<CoachCard | null> {
   try {
     const message = await runClaude({
       system: FALLBACK_SYSTEM,
       model: FALLBACK_MODEL,
       maxTokens: 200,
+      requestOptions: { timeout: FALLBACK_TIMEOUT_MS, maxRetries: 0 },
       messages: [
         {
           role: 'user',
@@ -74,7 +92,8 @@ export const POST = withApiErrors(async (request) => {
 
   try {
     const db = createSupabaseAdminClient();
-    const [playbookRes, leadRes, cmaRes] = await Promise.all([
+    const [callRes, playbookRes, leadRes, cmaRes] = await Promise.all([
+      db.from('calls').select('lead_id').eq('id', callId).maybeSingle(),
       db.from('playbook_cards').select('*').eq('active', true).order('sort', { ascending: true }),
       db.from('leads').select('*').eq('id', leadId).maybeSingle(),
       db
@@ -86,7 +105,8 @@ export const POST = withApiErrors(async (request) => {
         .limit(1)
         .maybeSingle(),
     ]);
-    if (playbookRes.error || leadRes.error) return paused();
+    if (callRes.error || playbookRes.error || leadRes.error) return paused();
+    if ((callRes.data as { lead_id: string | null } | null)?.lead_id !== leadId) return paused();
     const playbook = (playbookRes.data ?? []) as PlaybookCardRow[];
     const lead = (leadRes.data ?? {}) as Partial<LeadRow>;
     const range = (cmaRes.data as { price_range?: { low?: unknown; high?: unknown } } | null)?.price_range;
@@ -125,10 +145,16 @@ export const POST = withApiErrors(async (request) => {
         ];
       });
     } else if (decision.mode === 'fallback') {
-      const card = await claudeCard(turn.ownerSaid, turn.transcriptSoFar, lead.owner_first_name ?? null);
+      const card = await withTimeout(
+        claudeCard(turn.ownerSaid, turn.transcriptSoFar, lead.owner_first_name ?? null),
+        FALLBACK_TIMEOUT_MS + 500,
+      );
       if (card) {
         cards = [card];
         source = 'claude';
+      } else {
+        // The fallback failed or timed out: keep this turn's DNC signal, show "coaching paused".
+        return NextResponse.json({ turnId: turn.turnId, cards: [], dncP, paused: true, coachCardId: null });
       }
     }
 
@@ -136,7 +162,7 @@ export const POST = withApiErrors(async (request) => {
     let coachCardId: string | null = null;
     if (cards.length > 0) {
       const second = cards[1] ? cardAnswer.probabilities[cards[1].key] ?? null : null;
-      const { data } = await db
+      const { data, error: insertError } = await db
         .from('coach_cards')
         .insert({
           call_id: callId,
@@ -150,6 +176,7 @@ export const POST = withApiErrors(async (request) => {
         })
         .select('id')
         .single();
+      if (insertError) console.error('coach_cards insert failed', insertError.code ?? 'unknown');
       coachCardId = (data as { id: string } | null)?.id ?? null;
     }
 

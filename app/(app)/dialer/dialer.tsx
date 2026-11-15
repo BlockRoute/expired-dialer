@@ -79,7 +79,9 @@ export function Dialer(props: {
   useEffect(() => {
     flowCallIdRef.current = flow.callId;
   });
-  const onDncRequest = useCallback(() => setDncFor(flowCallIdRef.current), []);
+  const onDncRequest = useCallback((cid: string) => {
+    if (cid === flowCallIdRef.current) setDncFor(cid);
+  }, []);
   /** True while a save, voicemail drop or round close is running; a ref so a fast second keypress sees it before any re-render. */
   const busyRef = useRef(false);
 
@@ -203,13 +205,20 @@ export function Dialer(props: {
     }
   }, []);
 
+  /** True (with a message) when a DNC request is unresolved and `outcome` is not DNC. */
+  const dncGated = useCallback(
+    (outcome: string) => {
+      if (!dncRequested || dncOverridden || outcome === 'dnc') return false;
+      setMessage('The owner asked not to be called. Mark DNC, or click Override to save another outcome.');
+      return true;
+    },
+    [dncRequested, dncOverridden],
+  );
+
   const persist = useCallback(
     async (outcome: string): Promise<boolean> => {
       if (!canSaveOutcome(flow) || !flow.callId) return false;
-      if (dncRequested && !dncOverridden && outcome !== 'dnc') {
-        setMessage('The owner asked not to be called. Mark DNC, or click Override to save another outcome.');
-        return false;
-      }
+      if (dncGated(outcome)) return false;
       let callbackIso: string | undefined;
       if (outcome === 'callback_requested') {
         const when = callbackAt ? new Date(callbackAt) : null;
@@ -239,7 +248,7 @@ export function Dialer(props: {
         return false;
       }
     },
-    [flow, note, callbackAt, dncRequested, dncOverridden],
+    [flow, note, callbackAt, dncGated],
   );
 
   const submit = useCallback((outcome: string) => exclusive(async () => void (await persist(outcome))), [exclusive, persist]);
@@ -248,6 +257,7 @@ export function Dialer(props: {
     () =>
       exclusive(async () => {
         if (!flow.callId || !dropId) return;
+        if (dncGated('left_vm')) return; // before the drop plays, not after
         setMessage(null);
         try {
           const res = await fetch('/api/twilio/vm-drop', {
@@ -266,7 +276,7 @@ export function Dialer(props: {
         }
         await persist('left_vm');
       }),
-    [exclusive, flow.callId, dropId, persist],
+    [exclusive, flow.callId, dropId, persist, dncGated],
   );
 
   const skip = useCallback(

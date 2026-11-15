@@ -3,18 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CoachAction } from '@/lib/db/types';
 import type { OwnerTurn } from '@/lib/transcript';
+import { resolveCoachResponse, type PanelResponse } from '@/lib/coach/panel-state';
 import { recordCoachAction } from './actions';
 
-type CoachCard = { key: string; title: string; say: string; why?: string; source: 'jev' | 'claude' };
-type CoachResponse = {
-  turnId: number;
-  cards: CoachCard[];
-  dncP: number | null;
-  paused?: boolean;
-  coachCardId?: string | null;
-};
-
-export const DNC_THRESHOLD = 0.5;
+type CoachResponse = PanelResponse;
 
 /**
  * Live coaching cards for the owner's latest turn. Responses for an older turn
@@ -25,10 +17,10 @@ export function CoachPanel(props: {
   callId: string | null;
   leadId: string;
   onOwnerTurn: (cb: (turn: OwnerTurn) => void) => void;
-  onDncRequest: (requested: boolean) => void;
+  onDncRequest: (callId: string) => void;
 }) {
   const { callId, leadId, onOwnerTurn, onDncRequest } = props;
-  const [response, setResponse] = useState<CoachResponse | null>(null);
+  const [response, setResponse] = useState<{ cards: CoachResponse['cards']; coachCardId: string | null } | null>(null);
   const [acted, setActed] = useState<CoachAction | null>(null);
   const [paused, setPaused] = useState(false);
   const latest = useRef(-1);
@@ -46,29 +38,39 @@ export function CoachPanel(props: {
       if (turn.turnId === 0) latest.current = -1; // a new call's transcription session
       latest.current = Math.max(latest.current, turn.turnId);
       void (async () => {
+        let body: CoachResponse | null = null;
         try {
           const res = await fetch('/api/coach', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ callId: cid, leadId: lid, turn }),
           });
-          if (!res.ok) throw new Error('coach request failed');
-          const body = (await res.json()) as CoachResponse;
-          if (body.turnId < latest.current) return;
-          if (body.paused) {
-            setPaused(true);
-            return;
-          }
-          setPaused(false);
-          setResponse(body);
-          setActed(null);
-          if (body.dncP != null && body.dncP >= DNC_THRESHOLD) dncRef.current(true);
+          if (res.ok) body = (await res.json()) as CoachResponse;
         } catch {
+          body = null;
+        }
+        const { reportDnc, view } = resolveCoachResponse({
+          latestTurnId: latest.current,
+          currentCallId: ids.current.callId,
+          requestCallId: cid,
+          turnId: turn.turnId,
+          response: body,
+        });
+        if (reportDnc) dncRef.current(cid);
+        if (view.kind === 'paused') {
           setPaused(true);
+          setResponse(null);
+        } else if (view.kind === 'cards') {
+          setPaused(false);
+          setResponse({ cards: view.cards, coachCardId: view.coachCardId });
+          setActed(null);
         }
       })();
     });
-    return () => onOwnerTurn(() => {});
+    return () => {
+      ids.current = { callId: null, leadId: ids.current.leadId };
+      onOwnerTurn(() => {});
+    };
   }, [onOwnerTurn]);
 
   const act = (action: CoachAction) => {

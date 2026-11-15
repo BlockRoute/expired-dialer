@@ -86,12 +86,11 @@ export function useTranscription(call: Call | null, callId: string | null = null
 
     const flushTimer = setInterval(() => void outbox.flush(sessionCallId()), FLUSH_MS);
 
-    /** At most once per owner turn (it ends at the next rep final); skipped while the owner has said nothing. */
+    /** Fires on new owner text within the turn (cumulative ownerSaid); a rep final starts the next turn. */
     const fireOwnerTurn = () => {
-      if (closed || !trigger.ready()) return;
+      if (closed) return;
       const turn = buildOwnerTurn(finals, turnId);
-      if (!turn.ownerSaid) return;
-      trigger.markFired();
+      if (!trigger.shouldFire(turn.ownerSaid)) return;
       turnId++;
       try {
         ownerTurnCb.current?.(turn);

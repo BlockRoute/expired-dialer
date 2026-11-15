@@ -2,17 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { createOwnerTurnTrigger } from './trigger';
 
 describe('createOwnerTurnTrigger', () => {
-  it('fires once per owner turn; a rep final starts the next turn', () => {
+  it('fires again within a turn only when new owner text arrived', () => {
     const t = createOwnerTurnTrigger();
-    expect(t.ready()).toBe(true);
-    t.markFired(); // speech_final
-    expect(t.ready()).toBe(false); // UtteranceEnd for the same turn
-    t.onRepFinal();
-    expect(t.ready()).toBe(true);
+    expect(t.shouldFire('Yeah, uh')).toBe(true);
+    expect(t.shouldFire('Yeah, uh')).toBe(false); // UtteranceEnd, nothing new
+    expect(t.shouldFire("Yeah, uh we're going to relist with Susan")).toBe(true);
   });
-  it('stays ready until marked fired', () => {
+  it('a rep final starts a new turn', () => {
     const t = createOwnerTurnTrigger();
-    expect(t.ready()).toBe(true);
-    expect(t.ready()).toBe(true);
+    expect(t.shouldFire('hello')).toBe(true);
+    t.onRepFinal();
+    expect(t.shouldFire('hello')).toBe(true);
+  });
+  it('never fires on empty text', () => {
+    expect(createOwnerTurnTrigger().shouldFire('')).toBe(false);
   });
 });

@@ -21,6 +21,7 @@ type RunArgs = {
   maxTokens?: number;
   thinking?: boolean; // adaptive thinking on/off (off for simple extraction)
   toolChoice?: Anthropic.MessageCreateParams['tool_choice'];
+  requestOptions?: { timeout?: number; maxRetries?: number };
 };
 
 // System prompts must stay byte-stable across requests so the prompt cache
@@ -40,6 +41,7 @@ export async function runClaude(args: RunArgs): Promise<Anthropic.Message> {
     maxTokens = 8_000,
     thinking = false,
     toolChoice,
+    requestOptions,
   } = args;
 
   return anthropic().messages.create({
@@ -50,7 +52,7 @@ export async function runClaude(args: RunArgs): Promise<Anthropic.Message> {
     ...(tools && tools.length ? { tools } : {}),
     ...(toolChoice ? { tool_choice: toolChoice } : {}),
     ...(thinking ? { thinking: { type: 'adaptive' } } : {}),
-  });
+  }, requestOptions);
 }
 
 // Streaming variant — for surfaces that render token-by-token.

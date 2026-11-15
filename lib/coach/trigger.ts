@@ -1,17 +1,18 @@
 /**
- * Coaching fires at most once per owner turn. An owner turn ends at the next
- * rep final, so a speech_final followed by an UtteranceEnd (or a second
- * speech_final) for the same turn does not fire twice.
+ * Within one owner turn (it ends at the next rep final) every speech_final or
+ * UtteranceEnd that adds new owner text fires again with the cumulative text,
+ * so a short first fragment ("Yeah, uh") never uses up the turn.
  */
 export function createOwnerTurnTrigger() {
-  let fired = false;
+  let last = '';
   return {
-    ready: () => !fired,
-    markFired: () => {
-      fired = true;
+    shouldFire(ownerSaid: string): boolean {
+      if (!ownerSaid || ownerSaid === last) return false;
+      last = ownerSaid;
+      return true;
     },
     onRepFinal: () => {
-      fired = false;
+      last = '';
     },
   };
 }

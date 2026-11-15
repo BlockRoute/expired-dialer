@@ -26,7 +26,7 @@ function table(name: string) {
   const self = () => q;
   for (const m of ['select', 'eq', 'not', 'order', 'limit']) q[m] = self;
   q.maybeSingle = async () => ({
-    data: name === 'leads' ? { id: 'l1', owner_first_name: 'Jane', list_price: 425000, days_on_market: 10 } : null,
+    data: name === 'calls' ? { lead_id: '22222222-2222-4222-8222-222222222222' } : name === 'leads' ? { id: 'l1', owner_first_name: 'Jane', list_price: 425000, days_on_market: 10 } : null,
     error: null,
   });
   q.then = (res: (v: unknown) => unknown) => res({ data: name === 'playbook_cards' ? cards : [], error: null });
@@ -91,6 +91,40 @@ describe('POST /api/coach', () => {
     expect(res.status).toBe(200);
     expect(body.cards).toEqual([]);
     expect(body.coachCardId).toBeNull();
+    expect(body.dncP).toBe(0.01);
+    expect(body.paused).toBe(true);
+  });
+
+  it('a hung Claude fallback times out: paused, cards [], dncP kept', async () => {
+    jev.mockResolvedValue({
+      card: { type: 'choice', choice: 'none', confidence: 0.9, probabilities: { none: 0.9, a: 0.1 } },
+      dnc: { type: 'noul', noul: 0.97 },
+    });
+    runClaude.mockReturnValue(new Promise(() => {}));
+    vi.useFakeTimers();
+    try {
+      const pending = POST(req());
+      await vi.advanceTimersByTimeAsync(5000);
+      const body = await (await pending).json();
+      expect(body).toMatchObject({ cards: [], dncP: 0.97, paused: true, coachCardId: null });
+      expect(runClaude.mock.calls[0][0].requestOptions).toEqual({ timeout: 2500, maxRetries: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('call that belongs to another lead returns the paused shape', async () => {
+    const r = new Request('http://x/api/coach', {
+      method: 'POST',
+      body: JSON.stringify({
+        callId: '11111111-1111-4111-8111-111111111111',
+        leadId: '33333333-3333-4333-8333-333333333333',
+        turn: { ownerSaid: 'hello there', transcriptSoFar: '', turnId: 1 },
+      }),
+    });
+    const body = await (await POST(r)).json();
+    expect(body.paused).toBe(true);
+    expect(jev).not.toHaveBeenCalled();
   });
 
   it('fallback card is truncated to 20 words and labeled claude', async () => {
