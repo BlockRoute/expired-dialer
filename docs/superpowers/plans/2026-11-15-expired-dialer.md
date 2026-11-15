@@ -128,7 +128,7 @@ README lists every env var and the one-time manual steps from spec §6 (Twilio n
 - [ ] **Step 1: Write failing tests**
   - `normalizePhone('(804) 555-0142')`, `'804.555.0142'`, `'1-804-555-0142'`, `'8045550142 x12'` all `'+18045550142'`; `'555-0142'` null; `'+44 20 7946 0958'` null; `''` null.
   - `normalizeAddress('4417 Grove Avenue', '23221-1234') === normalizeAddress('4417 GROVE AVE.', '23221')`.
-  - `easternParts(new Date('2026-03-08T07:30:00Z'))` → minutes 180 (03:00 EDT after spring-forward), `easternParts(new Date('2026-11-01T05:30:00Z'))` → minutes 90 (01:30 EST second pass); `easternParts(new Date('2026-11-15T15:00:00Z')).weekday === 0`.
+  - `easternParts(new Date('2026-03-08T07:00:00Z'))` → minutes 180 (03:00 EDT, the instant after spring-forward), `easternParts(new Date('2026-11-01T06:30:00Z'))` → minutes 90 (01:30 EST, the repeated hour's second pass); `easternParts(new Date('2026-11-15T15:00:00Z')).weekday === 0`.
 - [ ] **Step 2: Run, verify FAIL** `pnpm vitest run lib/phone.test.ts lib/address.test.ts lib/time.test.ts`
 - [ ] **Step 3: Implement the three modules**
 - [ ] **Step 4: Run, verify PASS**
