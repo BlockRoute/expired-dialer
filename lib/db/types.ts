@@ -159,6 +159,8 @@ export type CmaRow = {
   time_window: string | null;
   radius_miles: number | null;
   notes: string | null;
+  favor_note: string | null;
+  weigh_note: string | null;
   published_slug: string | null;
   published_at: string | null;
   credits_used: number;
