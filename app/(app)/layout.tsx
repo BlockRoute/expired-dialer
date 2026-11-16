@@ -14,6 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Link href="/leads">Leads</Link>
           <Link href="/callbacks">Callbacks</Link>
           <Link href="/import">Import</Link>
+          <Link href="/settings">Settings</Link>
         </nav>
         <span className="text-sm text-neutral-600">{user.email}</span>
       </header>

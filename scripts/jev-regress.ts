@@ -1,7 +1,10 @@
 // Replays the proven TypeSafe experiments (experiments/typesafe) against the live API
 // using the production question builders. Exits 1 if card accuracy < 0.9 or any
 // DNC-request case is wrong.
-// Usage: TYPESAFE_API_KEY=... tsx scripts/jev-regress.ts
+// Usage: TYPESAFE_API_KEY=... tsx scripts/jev-regress.ts [--from-db]
+// --from-db loads the active playbook cards from Supabase (NEXT_PUBLIC_SUPABASE_URL +
+// SUPABASE_SERVICE_ROLE_KEY in the environment) instead of DEFAULT_PLAYBOOK.
+import { createClient } from '@supabase/supabase-js';
 import { jev } from '../lib/typesafe/client';
 import {
   appointmentNoul,
@@ -14,6 +17,19 @@ import {
   outcomeChoice,
 } from '../lib/typesafe/questions';
 import { DEFAULT_PLAYBOOK } from '../lib/coach/playbook-default';
+import type { PlaybookCardRow } from '../lib/db/types';
+
+async function loadPlaybook(fromDb: boolean): Promise<Pick<PlaybookCardRow, 'key' | 'criteria'>[]> {
+  if (!fromDb) return DEFAULT_PLAYBOOK;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('--from-db needs NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
+  const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  const { data, error } = await db.from('playbook_cards').select('key, criteria').eq('active', true).order('sort');
+  if (error) throw new Error(`playbook load failed: ${error.message}`);
+  console.log(`playbook: ${data.length} active cards from DB`);
+  return data as Pick<PlaybookCardRow, 'key' | 'criteria'>[];
+}
 
 const T = { timeoutMs: 20000 };
 const CALL_CONTEXT = 'Real estate agent cold-calling the owner of a recently expired home listing in Virginia.';
@@ -159,6 +175,7 @@ const pct = (n: number, d: number) => `${n}/${d} (${(n / d).toFixed(3)})`;
 
 async function main() {
   let failed = false;
+  const playbook = await loadPlaybook(process.argv.includes('--from-db'));
 
   // E1 + F2: coaching cards and DNC-request detection (36 cases).
   let cardOk = 0;
@@ -188,7 +205,7 @@ async function main() {
   for (const c of coaching) {
     const a = await jev(
       c.state,
-      { card: cardChoice(DEFAULT_PLAYBOOK, c.ctx), dnc: dncRequestNoul('owner_said') },
+      { card: cardChoice(playbook, c.ctx), dnc: dncRequestNoul('owner_said') },
       T,
     );
     const got = (a.card as Choice).choice;
