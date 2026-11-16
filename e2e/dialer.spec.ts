@@ -47,7 +47,8 @@ test('load queue, call, no answer -> phone 2, DNC -> next lead', async ({ page }
   // Seed: one scrubbed batch; lead A (two phones) ahead of lead B (one phone) in the queue.
   const { data: batch } = await admin
     .from('import_batches')
-    .insert({ file_name: 'e2e-dialer', vendor: 'e2e', scrub_date: pinned.toISOString().slice(0, 10), scrubbed_by_vendor: true })
+    // Yesterday: never after today on the server's real clock (a future scrub date blocks), and within 90 days of the pinned clock.
+    .insert({ file_name: 'e2e-dialer', vendor: 'e2e', scrub_date: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), scrubbed_by_vendor: true })
     .select('id')
     .single();
   const seedLead = async (property_address: string, expired_date: string, numbers: string[]) => {
@@ -139,8 +140,9 @@ test('load queue, call, no answer -> phone 2, DNC -> next lead', async ({ page }
   // Database effects.
   const { data: lead } = await admin.from('leads').select('status').eq('id', leadA).single();
   expect(lead!.status).toBe('dnc');
-  const { data: dnc } = await admin.from('dnc_numbers').select('number').eq('number', PHONES_A[1]);
-  expect(dnc).toHaveLength(1);
+  // A DNC outcome covers every number on the lead, not only the one dialed.
+  const { data: dnc } = await admin.from('dnc_numbers').select('number').in('number', PHONES_A);
+  expect(dnc).toHaveLength(PHONES_A.length);
   const { data: calls } = await admin.from('calls').select('outcome').eq('lead_id', leadA).order('created_at');
   expect(calls!.map((c) => c.outcome)).toEqual(['no_answer', 'dnc']);
 });

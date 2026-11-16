@@ -1,5 +1,5 @@
 import type { Active, Comp, RawComp, Subject, Window } from './types';
-import { WINDOWS, zillowActive, zillowSold } from './zillow';
+import { WINDOWS, zillowActive, zillowSold, type Budget } from './zillow';
 
 const EARTH_MILES = 3958.8;
 const DAY = 86_400_000;
@@ -73,7 +73,7 @@ export function credibleComps(subject: Subject, raw: RawComp[], limit = MAX_COMP
  * than 90 days, every credible sale from the 90-day window is kept and older sales (best-ranked first)
  * are added only as needed to reach 5. If no window gets there, the last window's set is returned.
  */
-export async function searchComps(subject: Subject): Promise<{ comps: Comp[]; window: Window; requests: number }> {
+export async function searchComps(subject: Subject, budget?: Budget): Promise<{ comps: Comp[]; window: Window; requests: number }> {
   let comps: Comp[] = [];
   let window = WINDOWS[0];
   let requests = 0;
@@ -81,7 +81,7 @@ export async function searchComps(subject: Subject): Promise<{ comps: Comp[]; wi
   for (const w of WINDOWS) {
     requests++;
     window = w;
-    const ranked = credibleComps(subject, await zillowSold(subject, w), Infinity);
+    const ranked = credibleComps(subject, await zillowSold(subject, w, budget), Infinity);
     if (w.soldInLast === '90_days') {
       recentIds = new Set(ranked.map((c) => c.zpid));
       comps = ranked.slice(0, MAX_COMPS);
@@ -98,9 +98,9 @@ export async function searchComps(subject: Subject): Promise<{ comps: Comp[]; wi
 const MAX_ACTIVES = 10;
 
 /** One extra request at the chosen window's radius. Any failure yields [] so it never fails the CMA. Excludes the subject itself. */
-export async function searchActives(subject: Subject, window: Window): Promise<Active[]> {
+export async function searchActives(subject: Subject, window: Window, budget?: Budget): Promise<Active[]> {
   try {
-    return (await zillowActive(subject, window))
+    return (await zillowActive(subject, window, budget))
       .filter((a) => a.zpid !== subject.zpid)
       .map((a) => ({
         ...a,

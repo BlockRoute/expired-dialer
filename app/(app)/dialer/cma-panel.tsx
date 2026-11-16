@@ -23,21 +23,38 @@ type Cma = {
   credits_used: number;
 };
 
-type CmaResult = { cma: Cma | null; reason?: 'no_match' | 'no_address' | 'error' };
+type CmaResult = { cma: Cma | null; reason?: 'no_match' | 'no_address' | 'error' | 'pending' };
 
 // One in-flight or finished request per lead, so a prefetch and the panel share a single call.
 const requests = new Map<string, Promise<CmaResult>>();
 
+const PENDING_POLL_MS = 3_000;
+const PENDING_POLLS = 10;
+
+async function fetchCma(leadId: string): Promise<CmaResult> {
+  try {
+    const res = await fetch(`/api/cma?leadId=${leadId}`, { cache: 'no-store' });
+    const body = (await res.json().catch(() => null)) as CmaResult | null;
+    return !res.ok || !body ? { cma: null, reason: 'error' } : body;
+  } catch {
+    return { cma: null, reason: 'error' };
+  }
+}
+
+/** Another request is already searching this address: wait for its stored result instead of searching again. */
+async function fetchCmaWaiting(leadId: string): Promise<CmaResult> {
+  for (let i = 0; i < PENDING_POLLS; i++) {
+    const r = await fetchCma(leadId);
+    if (r.reason !== 'pending') return r;
+    await new Promise((done) => setTimeout(done, PENDING_POLL_MS));
+  }
+  return { cma: null, reason: 'error' };
+}
+
 function loadCma(leadId: string): Promise<CmaResult> {
   let p = requests.get(leadId);
   if (!p) {
-    p = fetch(`/api/cma?leadId=${leadId}`, { cache: 'no-store' })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => null)) as CmaResult | null;
-        if (!res.ok || !body) return { cma: null, reason: 'error' as const };
-        return body;
-      })
-      .catch(() => ({ cma: null, reason: 'error' as const }));
+    p = fetchCmaWaiting(leadId);
     requests.set(leadId, p);
     // A failure is not remembered, so the next view retries.
     void p.then((r) => {

@@ -93,3 +93,29 @@ describe('zillowActive', () => {
     expect(u.searchParams.get('squareFeetRange')).toBe(`min:${Math.floor(SUBJECT.sqft! * 0.8)}, max:${Math.ceil(SUBJECT.sqft! * 1.25)}`);
   });
 });
+
+describe('request budget', () => {
+  it('each request times out at 6 s at most', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    stub(byAddressResponse());
+    await zillowByAddress('x', { deadline: Date.now() + 60_000, requests: 0 });
+    expect(timeout).toHaveBeenCalledWith(6_000);
+    timeout.mockRestore();
+  });
+  it('never waits past the deadline and counts every request it makes', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    stub(byAddressResponse());
+    const budget = { deadline: Date.now() + 2_000, requests: 0 };
+    await zillowByAddress('x', budget);
+    expect(timeout.mock.calls[0][0]).toBeLessThanOrEqual(2_000);
+    expect(budget.requests).toBe(1);
+    timeout.mockRestore();
+  });
+  it('a spent budget throws before any request', async () => {
+    const f = stub(byAddressResponse());
+    const budget = { deadline: Date.now() - 1, requests: 0 };
+    await expect(zillowByAddress('x', budget)).rejects.toThrow(/budget/);
+    expect(f).not.toHaveBeenCalled();
+    expect(budget.requests).toBe(0);
+  });
+});

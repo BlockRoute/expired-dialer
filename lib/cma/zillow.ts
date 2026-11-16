@@ -17,12 +17,23 @@ export const WINDOWS: Window[] = [
 
 type Json = Record<string, unknown>;
 
-async function get(path: string, params: Record<string, string>): Promise<Json | null> {
+const REQUEST_TIMEOUT_MS = 6_000;
+
+/**
+ * Shared by every request of one CMA lookup: no request starts or waits past `deadline`
+ * (epoch ms), and `requests` counts each one sent (each spends a credit).
+ */
+export type Budget = { deadline: number; requests: number };
+
+async function get(path: string, params: Record<string, string>, budget?: Budget): Promise<Json | null> {
   const key = process.env.REALTYAPI_KEY;
   if (!key) throw new Error('REALTYAPI_KEY is not set');
+  const left = budget ? budget.deadline - Date.now() : REQUEST_TIMEOUT_MS;
+  if (left <= 0) throw new Error('RealtyAPI time budget spent');
+  if (budget) budget.requests++;
   const res = await fetch(`${BASE}${path}?${new URLSearchParams(params)}`, {
     headers: { 'x-realtyapi-key': key },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, left)),
     cache: 'no-store',
   });
   if (res.status === 404) return null;
@@ -54,8 +65,8 @@ function ms(o: Json | undefined, ...keys: string[]): number | null {
 }
 
 /** Subject by address. Allowlist only: the response's value-estimate fields are never read. Null when not found. */
-export async function zillowByAddress(address: string): Promise<Subject | null> {
-  const p = await get('/pro/byaddress', { propertyaddress: address });
+export async function zillowByAddress(address: string, budget?: Budget): Promise<Subject | null> {
+  const p = await get('/pro/byaddress', { propertyaddress: address }, budget);
   const zpid = num(p ?? undefined, 'zpid');
   const lat = num(p ?? undefined, 'latitude');
   const lng = num(p ?? undefined, 'longitude');
@@ -82,7 +93,7 @@ function resultList(body: Json | null): Json[] {
 }
 
 /** Sold houses near the subject within one window, sqft -20%/+25%, newest first. */
-export async function zillowSold(subject: Subject, window: Window): Promise<RawComp[]> {
+export async function zillowSold(subject: Subject, window: Window, budget?: Budget): Promise<RawComp[]> {
   const params: Record<string, string> = {
     latitude: String(subject.lat),
     longitude: String(subject.lng),
@@ -94,7 +105,7 @@ export async function zillowSold(subject: Subject, window: Window): Promise<RawC
   };
   if (subject.sqft) params.squareFeetRange = `min:${Math.floor(subject.sqft * 0.8)}, max:${Math.ceil(subject.sqft * 1.25)}`;
   const out: RawComp[] = [];
-  for (const r of resultList(await get('/search/bycoordinates', params))) {
+  for (const r of resultList(await get('/search/bycoordinates', params, budget))) {
     const home = (r.hdpData as Json | undefined)?.homeInfo as Json | undefined;
     const zpid = num(r, 'zpid');
     const lat = num(r, 'latitude') ?? num(r.latLong as Json | undefined, 'latitude') ?? num(home, 'latitude');
@@ -119,7 +130,7 @@ export async function zillowSold(subject: Subject, window: Window): Promise<RawC
 }
 
 /** For-sale houses near the subject, same radius and sqft band as the sold window. Allowlist only. */
-export async function zillowActive(subject: Subject, window: Window): Promise<RawActive[]> {
+export async function zillowActive(subject: Subject, window: Window, budget?: Budget): Promise<RawActive[]> {
   const params: Record<string, string> = {
     latitude: String(subject.lat),
     longitude: String(subject.lng),
@@ -129,7 +140,7 @@ export async function zillowActive(subject: Subject, window: Window): Promise<Ra
   };
   if (subject.sqft) params.squareFeetRange = `min:${Math.floor(subject.sqft * 0.8)}, max:${Math.ceil(subject.sqft * 1.25)}`;
   const out: RawActive[] = [];
-  for (const r of resultList(await get('/search/bycoordinates', params))) {
+  for (const r of resultList(await get('/search/bycoordinates', params, budget))) {
     const home = (r.hdpData as Json | undefined)?.homeInfo as Json | undefined;
     const zpid = num(r, 'zpid');
     const lat = num(r, 'latitude') ?? num(r.latLong as Json | undefined, 'latitude') ?? num(home, 'latitude');
