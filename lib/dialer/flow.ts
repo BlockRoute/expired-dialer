@@ -22,7 +22,9 @@ export type FlowAction =
   | { type: 'call_id'; callId: string }
   | { type: 'disconnected' }
   | { type: 'saved'; advance: Advance }
-  | { type: 'skip' };
+  | { type: 'skip' }
+  /** The lead was closed outside an outcome save (Mark lead DNC): move on whatever the call state. */
+  | { type: 'lead_closed' };
 
 export const initialFlow: FlowState = { queue: [], phoneIndex: 0, callState: 'idle', callId: null };
 
@@ -40,6 +42,8 @@ const PHONE_LEVEL: ReadonlySet<BlockReason> = new Set(['internal_dnc', 'vendor_d
 export type DialContext = {
   batches: ImportBatchRow[];
   dncNumbers: readonly string[];
+  /** Numbers vendor-flagged do_not_call on any phones row: blocked on every lead. */
+  vendorDncNumbers: readonly string[];
   settings: SettingsRow;
   now: Date;
 };
@@ -47,12 +51,14 @@ export type DialContext = {
 /** Dialable phones that the phone-level guardrails would not block, in call order. */
 export function callablePhones(lead: LeadRow, phones: PhoneRow[], ctx: DialContext): PhoneRow[] {
   const dnc = new Set(ctx.dncNumbers);
+  const vendorDnc = new Set(ctx.vendorDncNumbers);
   return dialablePhones(phones).filter((phone) => {
     const decision = checkDial({
       lead,
       phone,
       batch: ctx.batches.find((b) => b.id === phone.batch_id) ?? null,
       internalDnc: dnc.has(phone.number),
+      vendorDncElsewhere: vendorDnc.has(phone.number),
       settings: ctx.settings,
       now: ctx.now,
     });
@@ -71,6 +77,15 @@ export function hasNextCallablePhone(lead: LeadRow, phones: PhoneRow[], currentP
 
 export const currentLead = (s: FlowState): FlowLead | null => s.queue[0] ?? null;
 export const currentPhone = (s: FlowState): PhoneRow | null => currentLead(s)?.phones[s.phoneIndex] ?? null;
+
+/**
+ * The server answered next_phone (so it left the visit open) but this client has no
+ * phone after the current one: the lead moves on, so the caller must close the round.
+ */
+export function savedLeavesRoundOpen(s: FlowState, advance: Advance): boolean {
+  const lead = currentLead(s);
+  return advance === 'next_phone' && !!lead && s.phoneIndex + 1 >= lead.phones.length;
+}
 
 export const canDial = (s: FlowState) => s.callState === 'idle' && currentPhone(s) !== null;
 /** An outcome needs a server-side call row to attach to. */
@@ -109,5 +124,7 @@ export function flowReducer(s: FlowState, a: FlowAction): FlowState {
     }
     case 'skip':
       return canSkip(s) ? nextLead(s) : s;
+    case 'lead_closed':
+      return currentLead(s) ? nextLead(s) : s;
   }
 }

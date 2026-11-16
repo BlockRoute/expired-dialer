@@ -3,13 +3,14 @@
 import { requireUser } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { mergeLead, mergeVendorDnc, type ImportedLead } from '@/lib/import/build';
-import { importedLeadsSchema } from '@/lib/import/schema';
+import { importedLeadsSchema, scrubDateError } from '@/lib/import/schema';
 import { classifyDncValues, suggestMapping } from '@/lib/import/suggest';
 import type { ColumnTarget, DncValue, VendorMapping } from '@/lib/import/mapping';
 import type { ImportBatchRow, LeadRow, PhoneRow } from '@/lib/db/types';
 
 const CHUNK = 500;
 const LOOKUP_CHUNK = 100; // `in (...)` filters travel in the URL
+const UPDATE_CONCURRENCY = 10; // existing leads are patched one row per request
 
 function chunks<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -86,7 +87,8 @@ export async function createBatch(input: {
   totalRows: number;
 }): Promise<string> {
   await requireUser();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.scrubDate)) throw new Error('Scrub date is required');
+  const scrubProblem = scrubDateError(input.scrubDate, new Date());
+  if (scrubProblem) throw new Error(scrubProblem);
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from('import_batches')
@@ -163,14 +165,32 @@ export async function applyImport(
 
     // 3. Existing leads: listing fields, plus out_of_state when the file now shows a non-VA state
     //    (mergeLead never changes dnc/dead/appointment status).
+    //    Only the patch columns are written: a full-row upsert would put back the status,
+    //    rounds, cooldown and open visit read above over anything that changed since.
     if (toUpdate.length) {
       const now = new Date().toISOString();
-      const rows = toUpdate.map((l) => {
-        const row = existing.get(l.normalizedAddress)!;
-        return { ...row, ...mergeLead(row, l), batch_id: batchId, updated_at: now };
-      });
-      const { error } = await supabase.from('leads').upsert(rows, { onConflict: 'id' });
-      if (error) throw new Error(error.message);
+      for (const part of chunks(toUpdate, UPDATE_CONCURRENCY)) {
+        await Promise.all(
+          part.map(async (l) => {
+            const row = existing.get(l.normalizedAddress)!;
+            const { status, ...fields } = mergeLead(row, l);
+            const { error } = await supabase
+              .from('leads')
+              .update({ ...fields, batch_id: batchId, updated_at: now })
+              .eq('id', row.id);
+            if (error) throw new Error(error.message);
+            if (status) {
+              // out_of_state never overrides a lead closed in the meantime.
+              const res = await supabase
+                .from('leads')
+                .update({ status })
+                .eq('id', row.id)
+                .not('status', 'in', '(dnc,dead,appointment,out_of_state)');
+              if (res.error) throw new Error(res.error.message);
+            }
+          }),
+        );
+      }
       totals.updated += toUpdate.length;
     }
 

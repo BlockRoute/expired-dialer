@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { outcomeLabel } from '@/lib/outcomes';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { CallbackRow, CallRow, LeadRow, PhoneRow } from '@/lib/db/types';
+import { DncActions } from './dnc-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -91,6 +92,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
         </h1>
       </div>
 
+      <DncActions leadId={lead.id} inReview={!!lead.dnc_review_at} isDnc={lead.status === 'dnc'} />
+
       <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
         {facts.filter(([, v]) => v !== null && v !== '').map(([k, v]) => (
           <div key={k}>
@@ -141,6 +144,9 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   <span>
                     <span className="font-medium">{c.outcome ? outcomeLabel(c.outcome) : 'No outcome saved'}</span>
                     <span className="text-neutral-500"> · {c.direction} · {c.status}</span>
+                    {c.dnc_suspected && c.outcome !== 'dnc' && (
+                      <span className="ml-2 rounded bg-red-100 px-1.5 text-xs text-red-800">DNC request suspected</span>
+                    )}
                   </span>
                   <span className="text-neutral-600">{stamp(c.started_at ?? c.created_at)}</span>
                 </div>

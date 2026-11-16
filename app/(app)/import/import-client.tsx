@@ -15,6 +15,7 @@ import {
   type VendorMapping,
 } from '@/lib/import/mapping';
 import { parseSheet } from '@/lib/import/parse';
+import { easternParts } from '@/lib/time';
 import {
   applyImport,
   createBatch,
@@ -393,6 +394,7 @@ export function ImportClient() {
                 <input
                   type="date"
                   required
+                  max={easternParts(new Date()).date}
                   className={input}
                   value={scrubDate}
                   onChange={(e) => setScrubDate(e.target.value)}

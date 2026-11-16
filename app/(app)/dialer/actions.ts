@@ -51,24 +51,26 @@ export async function saveOutcome(
   // A phone only counts as "next" if the phone-level guardrails would let it be dialed.
   const batchIds = [...new Set(phones.map((p) => p.batch_id).filter((id): id is string => !!id))];
   const numbers = phones.map((p) => p.number);
-  const [batchesRes, dncRes] = await Promise.all([
+  const [batchesRes, dncRes, vendorDncRes] = await Promise.all([
     batchIds.length
       ? supabase.from('import_batches').select('*').in('id', batchIds)
       : Promise.resolve({ data: [], error: null }),
     supabase.from('dnc_numbers').select('number').in('number', numbers),
+    supabase.from('phones').select('number').in('number', numbers).eq('vendor_dnc', 'do_not_call'),
   ]);
-  if (batchesRes.error || dncRes.error) return { ok: false, error: 'Could not load the guardrail data.' };
+  if (batchesRes.error || dncRes.error || vendorDncRes.error) return { ok: false, error: 'Could not load the guardrail data.' };
   const now = new Date();
   const hasNextPhone = hasNextCallablePhone(lead, phones, phone.id, {
     batches: (batchesRes.data ?? []) as ImportBatchRow[],
     dncNumbers: ((dncRes.data ?? []) as { number: string }[]).map((d) => d.number),
+    vendorDncNumbers: ((vendorDncRes.data ?? []) as { number: string }[]).map((d) => d.number),
     settings,
     now,
   });
 
   let effects;
   try {
-    effects = applyOutcome({ outcome, lead, phone, hasNextPhone, settings, now, callbackAt });
+    effects = applyOutcome({ outcome, lead, phone, hasNextPhone, leadNumbers: numbers, settings, now, callbackAt });
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Invalid outcome.' };
   }
@@ -81,7 +83,7 @@ export async function saveOutcome(
     p_lead_attempt_rounds: effects.lead.attempt_rounds ?? null,
     p_lead_next_eligible_at: effects.lead.next_eligible_at ?? null,
     p_phone_status: effects.phone?.status ?? null,
-    p_dnc_number: effects.addInternalDnc ?? null,
+    p_dnc_numbers: effects.addInternalDnc ?? null,
     p_callback_due_at: effects.callback?.due_at ?? null,
     p_close_callbacks: effects.advance === 'next_lead',
     p_advance: effects.advance,

@@ -15,6 +15,7 @@ const SUMMARY_MODEL = 'claude-sonnet-5-5';
 // summary attempt (15 s, no retry) stays under the 26 s synchronous limit (see README).
 const SUMMARY_TIMEOUT_MS = 15_000;
 const JEV_TIMEOUT_MS = 8_000;
+const DNC_THRESHOLD = 0.5;
 
 // Byte-stable: the transcript goes in the user message, never here.
 const SUMMARY_SYSTEM = [
@@ -61,7 +62,34 @@ async function writeSummary(db: ReturnType<typeof createSupabaseAdminClient>, ca
   }
 }
 
-/** Post-call: outcome pre-fill from Jev (returned now) and the Claude summary (written after the response). */
+type Db = ReturnType<typeof createSupabaseAdminClient>;
+
+/**
+ * Spec 8a post-call pass: the full transcript reads as a DNC request the saved outcome
+ * is not. Flag the call and hold the lead out of dialing until Daniel reviews it on the
+ * lead page. Nothing is added to dnc_numbers here. Returns whether it flagged.
+ */
+async function flagDncReview(db: Db, call: { id: string; lead_id: string | null; outcome: string | null }, dncP: number) {
+  if (!(dncP >= DNC_THRESHOLD) || call.outcome === 'dnc' || !call.lead_id) return false;
+  const [callUpd, leadUpd] = await Promise.all([
+    db.from('calls').update({ dnc_suspected: true }).eq('id', call.id),
+    db
+      .from('leads')
+      .update({ dnc_review_at: new Date().toISOString() })
+      .eq('id', call.lead_id)
+      .is('dnc_review_at', null)
+      .neq('status', 'dnc'),
+  ]);
+  if (callUpd.error || leadUpd.error) {
+    console.error('dnc review flag failed', call.id, (callUpd.error ?? leadUpd.error)?.code ?? 'unknown');
+  }
+  return true;
+}
+
+/**
+ * Post-call: the DNC re-check (always, when the owner spoke), the outcome pre-fill from
+ * Jev (only while no outcome is saved), and the Claude summary (written after the response).
+ */
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   return withApiErrors(async () => {
     await requireUserApi();
@@ -70,12 +98,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     const db = createSupabaseAdminClient();
     const [callRes, segRes, settingsRes] = await Promise.all([
-      db.from('calls').select('id, ai_summary, outcome_saved_at').eq('id', id).maybeSingle(),
+      db.from('calls').select('id, lead_id, ai_summary, outcome, outcome_saved_at').eq('id', id).maybeSingle(),
       db.from('transcript_segments').select('speaker, text, t_start').eq('call_id', id).order('t_start', { ascending: true }),
       db.from('settings').select('outcomes').eq('id', 1).maybeSingle(),
     ]);
     if (callRes.error || segRes.error) throw new Error('Database request failed');
-    const call = callRes.data as { ai_summary: unknown; outcome_saved_at: string | null } | null;
+    const call = callRes.data as
+      | { id: string; lead_id: string | null; ai_summary: unknown; outcome: string | null; outcome_saved_at: string | null }
+      | null;
     if (!call) return NextResponse.json({ ok: false, error: 'Call not found.' }, { status: 404 });
 
     const rows = (segRes.data ?? []) as { speaker: 'rep' | 'owner'; text: string; t_start: number | null }[];
@@ -84,8 +114,20 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     if (!call.ai_summary) after(() => writeSummary(db, id, transcript));
 
-    // A saved outcome is final; the suggestion never replaces it.
-    if (call.outcome_saved_at) return NextResponse.json({ prefill: null });
+    const review = (flagged: boolean) => (flagged ? { dncReview: true } : {});
+
+    // A saved outcome is final; the suggestion never replaces it. The DNC re-check still runs.
+    if (call.outcome_saved_at) {
+      try {
+        const answers = await jev({ transcript }, { dnc: dncRequestNoul('transcript') }, { timeoutMs: JEV_TIMEOUT_MS });
+        const dnc = answers.dnc;
+        const flagged = dnc?.type === 'noul' ? await flagDncReview(db, { ...call, id }, dnc.noul) : false;
+        return NextResponse.json({ prefill: null, ...review(flagged) });
+      } catch (e) {
+        console.error('post-call dnc check failed', id, e instanceof Error ? e.name : 'error');
+        return NextResponse.json({ prefill: null });
+      }
+    }
 
     const enabled = (settingsRes.data as { outcomes?: string[] } | null)?.outcomes;
     const criteria = Object.fromEntries(
@@ -102,7 +144,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         },
         { timeoutMs: JEV_TIMEOUT_MS },
       );
-      return NextResponse.json({ prefill: prefillFromAnswers(answers, enabled) });
+      const dnc = answers.dnc;
+      const flagged = dnc?.type === 'noul' ? await flagDncReview(db, { ...call, id }, dnc.noul) : false;
+      return NextResponse.json({ prefill: prefillFromAnswers(answers, enabled), ...review(flagged) });
     } catch (e) {
       console.error('post-call prefill failed', id, e instanceof Error ? e.name : 'error');
       return NextResponse.json({ prefill: null });

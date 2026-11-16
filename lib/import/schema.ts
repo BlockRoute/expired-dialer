@@ -1,3 +1,4 @@
+import { easternParts } from '../time';
 import { z } from 'zod';
 
 const text = z.string().max(500).nullable().optional();
@@ -42,3 +43,12 @@ export const importedLeadSchema = z.strictObject({
 });
 
 export const importedLeadsSchema = z.array(importedLeadSchema).max(500);
+
+/** Why a batch scrub date is unusable, or null. A date after today (America/New_York) is a typo that would keep an unscrubbed list callable. */
+export function scrubDateError(scrubDate: string, now: Date): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(scrubDate);
+  const d = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+  if (!m || !d || d.toISOString().slice(0, 10) !== scrubDate) return 'Scrub date is required';
+  if (scrubDate > easternParts(now).date) return 'Scrub date cannot be in the future';
+  return null;
+}

@@ -6,7 +6,8 @@ export type Advance = 'next_phone' | 'next_lead';
 export type OutcomeEffects = {
   lead: Partial<LeadRow>;
   phone?: Partial<PhoneRow>;
-  addInternalDnc?: string;
+  /** Every number on the lead: a DNC request covers the owner, not one line. */
+  addInternalDnc?: string[];
   callback?: { due_at: string };
   advance: Advance;
 };
@@ -27,6 +28,7 @@ export function closeRoundPatch(lead: LeadRow, settings: SettingsRow, now: Date)
 /**
  * Maps a saved call outcome to its effects on the lead and phone.
  * `hasNextPhone` is whether another dialable phone follows this one for the lead.
+ * `leadNumbers` is every phone number on the lead (a DNC outcome blocks them all).
  * Phone-level outcomes (no answer, bad number, wrong person) close the round
  * when no phone remains.
  */
@@ -35,6 +37,7 @@ export function applyOutcome(input: {
   lead: LeadRow;
   phone: PhoneRow;
   hasNextPhone: boolean;
+  leadNumbers: readonly string[];
   settings: SettingsRow;
   now: Date;
   callbackAt?: string;
@@ -52,11 +55,12 @@ function computeEffects(input: {
   lead: LeadRow;
   phone: PhoneRow;
   hasNextPhone: boolean;
+  leadNumbers: readonly string[];
   settings: SettingsRow;
   now: Date;
   callbackAt?: string;
 }): OutcomeEffects {
-  const { outcome, lead, phone, hasNextPhone, settings, now, callbackAt } = input;
+  const { outcome, lead, phone, hasNextPhone, leadNumbers, settings, now, callbackAt } = input;
 
   const endRound = () => closeRoundPatch(lead, settings, now);
   const phoneLevel = (phonePatch?: Partial<PhoneRow>): OutcomeEffects =>
@@ -68,7 +72,7 @@ function computeEffects(input: {
   if (outcome === 'bad_number') return phoneLevel({ status: 'dead' });
   if (outcome === 'wrong_person') return phoneLevel({ status: 'wrong' });
   if (outcome === 'dnc') {
-    return { lead: { status: 'dnc' }, addInternalDnc: phone.number, advance: 'next_lead' };
+    return { lead: { status: 'dnc' }, addInternalDnc: [...new Set([phone.number, ...leadNumbers])], advance: 'next_lead' };
   }
   if (outcome === 'appointment_set') return { lead: { status: 'appointment' }, advance: 'next_lead' };
   if (outcome === 'callback_requested') {

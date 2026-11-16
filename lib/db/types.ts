@@ -43,6 +43,8 @@ export type LeadRow = {
   attempt_rounds: number;
   next_eligible_at: string | null;
   visit_open_at: string | null;
+  /** Set when the post-call DNC re-check read a DNC request the saved outcome is not; blocks dialing until reviewed. */
+  dnc_review_at: string | null;
   normalized_address: string | null;
   mailing_state: string | null;
   owner_full_name: string | null;
@@ -101,6 +103,7 @@ export type CallRow = {
   note: string | null;
   recording_path: string | null;
   ai_summary: Record<string, unknown> | null;
+  dnc_suspected: boolean;
   created_at: string;
 };
 
@@ -165,6 +168,7 @@ export type CmaRow = {
   published_slug: string | null;
   published_at: string | null;
   credits_used: number;
+  state: 'pending' | 'done' | 'error';
   created_at: string;
 };
 

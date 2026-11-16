@@ -16,7 +16,7 @@ const settings = (o: Partial<SettingsRow> = {}): SettingsRow =>
 // Eastern (EST, UTC-5, November 2026) wall-clock -> instant. 2026-11-16 is a Monday.
 const et = (day: string, hms: string) => new Date(`${day}T${hms}-05:00`);
 const NOW = et('2026-11-16', '12:00:00');
-const base = { lead: lead(), phone: phone(), batch: batch(), internalDnc: false, settings: settings(), now: NOW };
+const base = { lead: lead(), phone: phone(), batch: batch(), internalDnc: false, vendorDncElsewhere: false, settings: settings(), now: NOW };
 
 describe('checkDial list checks', () => {
   it('ok baseline', () => expect(checkDial(base)).toEqual({ ok: true }));
@@ -41,6 +41,15 @@ describe('checkDial list checks', () => {
     const now = new Date('2026-11-17T00:30:00Z');
     expect(checkDial({ ...base, now, batch: batch({ scrub_date: '2026-08-18' }) })).toEqual({ ok: true });
   });
+  it('a scrub date in the future blocks as scrub_stale (year typo)', () => {
+    expect(checkDial({ ...base, batch: batch({ scrub_date: '2026-11-17' }) })).toEqual({ ok: false, reason: 'scrub_stale' });
+    expect(checkDial({ ...base, batch: batch({ scrub_date: '2027-11-01' }) })).toEqual({ ok: false, reason: 'scrub_stale' });
+    expect(checkDial({ ...base, batch: batch({ scrub_date: '2026-11-16' }) })).toEqual({ ok: true });
+  });
+  it('the same number flagged do_not_call on another lead blocks this phone', () =>
+    expect(checkDial({ ...base, vendorDncElsewhere: true })).toEqual({ ok: false, reason: 'vendor_dnc' }));
+  it('a lead awaiting DNC review is blocked', () =>
+    expect(checkDial({ ...base, lead: lead({ dnc_review_at: '2026-11-16T16:00:00Z' }) })).toEqual({ ok: false, reason: 'dnc_review' }));
   it('lead statuses', () => {
     expect(checkDial({ ...base, lead: lead({ status: 'out_of_state' }) })).toEqual({ ok: false, reason: 'out_of_state' });
     for (const s of ['dnc', 'dead', 'appointment'] as const)

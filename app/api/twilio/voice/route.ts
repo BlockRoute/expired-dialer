@@ -45,19 +45,22 @@ export async function POST(request: Request) {
       return xml(messageTwiml('Blocked: number does not match the lead'));
     }
 
-    const [batchRes, dncRes] = await Promise.all([
+    const [batchRes, dncRes, vendorDncRes] = await Promise.all([
       phone.batch_id
         ? db.from('import_batches').select('*').eq('id', phone.batch_id).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       db.from('dnc_numbers').select('number').eq('number', phone.number).maybeSingle(),
+      // A vendor do_not_call flag blocks the number on every lead it appears on.
+      db.from('phones').select('id').eq('number', phone.number).eq('vendor_dnc', 'do_not_call').limit(1),
     ]);
-    if (batchRes.error || dncRes.error) throw new Error('lookup failed');
+    if (batchRes.error || dncRes.error || vendorDncRes.error) throw new Error('lookup failed');
 
     const decision = checkDial({
       lead,
       phone,
       batch: (batchRes.data as ImportBatchRow | null) ?? null,
       internalDnc: !!dncRes.data,
+      vendorDncElsewhere: (vendorDncRes.data ?? []).length > 0,
       settings,
       now: new Date(),
     });

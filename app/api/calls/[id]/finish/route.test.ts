@@ -24,10 +24,11 @@ vi.mock('@/lib/ai/anthropic', async () => {
 let callRow: Record<string, unknown> | null;
 let segments: { speaker: string; text: string; t_start: number }[];
 const updates: unknown[] = [];
+const writes: { table: string; row: unknown }[] = [];
 function table(name: string) {
   const q: Record<string, unknown> = {};
   const self = () => q;
-  for (const m of ['select', 'eq', 'is', 'order']) q[m] = self;
+  for (const m of ['select', 'eq', 'is', 'neq', 'order']) q[m] = self;
   q.maybeSingle = async () => ({
     data: name === 'calls' ? callRow : name === 'settings' ? { outcomes: ['connected', 'dnc', 'appointment_set', 'callback_requested', 'not_interested'] } : null,
     error: null,
@@ -35,6 +36,7 @@ function table(name: string) {
   q.then = (res: (v: unknown) => unknown) => res({ data: name === 'transcript_segments' ? segments : [], error: null });
   q.update = (row: unknown) => {
     updates.push(row);
+    writes.push({ table: name, row });
     return q;
   };
   return q;
@@ -62,6 +64,7 @@ beforeEach(() => {
   jev.mockReset();
   runClaude.mockReset();
   updates.length = 0;
+  writes.length = 0;
   afterTasks.length = 0;
   callRow = { id: ID, ai_summary: null, outcome_saved_at: null };
   segments = talk;
@@ -144,6 +147,51 @@ describe('POST /api/calls/[id]/finish', () => {
     jev.mockResolvedValue(jevOk);
     runClaude.mockResolvedValue({ content: [{ type: 'text', text: '{"summary":"S","note":"N","next_step":"X"}' }] });
     expect(await (await call()).json()).toEqual({ prefill: null });
+  });
+
+  const dncJev = (p: number) => ({ dnc: { type: 'noul', noul: p } });
+  const flags = () => writes.filter((w) => w.table === 'leads' || 'dnc_suspected' in (w.row as object));
+
+  it('an outcome saved straight after hang-up still gets the DNC re-check', async () => {
+    callRow = { id: ID, lead_id: 'L1', ai_summary: { summary: 'done' }, outcome: 'connected', outcome_saved_at: '2026-11-15T00:00:00Z' };
+    jev.mockResolvedValue(dncJev(0.1));
+    expect(await (await call()).json()).toEqual({ prefill: null });
+    expect(jev).toHaveBeenCalledTimes(1);
+    expect(Object.keys(jev.mock.calls[0][1])).toEqual(['dnc']);
+    expect(flags()).toEqual([]);
+  });
+
+  it('dnc >= 0.5 with a saved non-DNC outcome flags the call and puts the lead in DNC review', async () => {
+    callRow = { id: ID, lead_id: 'L1', ai_summary: { summary: 'done' }, outcome: 'connected', outcome_saved_at: '2026-11-15T00:00:00Z' };
+    jev.mockResolvedValue(dncJev(0.8));
+    const body = await (await call()).json();
+    expect(body).toEqual({ prefill: null, dncReview: true });
+    expect(writes).toContainEqual({ table: 'calls', row: { dnc_suspected: true } });
+    const lead = writes.find((w) => w.table === 'leads')!.row as { dnc_review_at: string };
+    expect(Number.isNaN(Date.parse(lead.dnc_review_at))).toBe(false);
+  });
+
+  it('no flag when the saved outcome is already dnc', async () => {
+    callRow = { id: ID, lead_id: 'L1', ai_summary: { summary: 'done' }, outcome: 'dnc', outcome_saved_at: '2026-11-15T00:00:00Z' };
+    jev.mockResolvedValue(dncJev(0.95));
+    expect(await (await call()).json()).toEqual({ prefill: null });
+    expect(flags()).toEqual([]);
+  });
+
+  it('no flag below 0.5', async () => {
+    callRow = { id: ID, lead_id: 'L1', ai_summary: { summary: 'done' }, outcome: 'connected', outcome_saved_at: '2026-11-15T00:00:00Z' };
+    jev.mockResolvedValue(dncJev(0.49));
+    await call();
+    expect(flags()).toEqual([]);
+  });
+
+  it('no outcome yet: the prefill suggests DNC and the lead is held for review', async () => {
+    callRow = { id: ID, lead_id: 'L1', ai_summary: { summary: 'done' }, outcome: null, outcome_saved_at: null };
+    jev.mockResolvedValue({ ...jevOk, dnc: { type: 'noul', noul: 0.9 } });
+    const body = await (await call()).json();
+    expect(body.prefill).toMatchObject({ outcome: 'dnc', dncSuggested: true });
+    expect(body.dncReview).toBe(true);
+    expect(writes).toContainEqual({ table: 'calls', row: { dnc_suspected: true } });
   });
 
   it('Claude failure leaves ai_summary null and logs no transcript text', async () => {

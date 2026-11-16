@@ -11,12 +11,14 @@ import {
   currentPhone,
   flowReducer,
   initialFlow,
+  savedLeavesRoundOpen,
   type FlowLead,
 } from '@/lib/dialer/flow';
 import { checkDial, type BlockReason } from '@/lib/guardrails';
 import { outcomeLabel, PRIMARY_OUTCOMES } from '@/lib/outcomes';
 import type { ImportBatchRow, SettingsRow } from '@/lib/db/types';
 import { closeRound, lookupCallId, saveOutcome } from './actions';
+import { markLeadDnc } from '../leads/actions';
 import type { Prefill } from '@/lib/postcall/prefill';
 import { dncAppliesToCall } from '@/lib/coach/panel-state';
 import { CoachPanel } from './coach-panel';
@@ -33,6 +35,7 @@ const BLOCK_TEXT: Record<BlockReason, string> = {
   outside_hours: 'Outside calling hours',
   out_of_state: 'Out of state',
   lead_closed: 'Lead is closed',
+  dnc_review: 'Possible DNC request: review it on the lead page',
   phone_dead: 'Phone marked bad',
   cooldown: 'Cooling down until the next round',
   max_rounds: 'Max rounds reached',
@@ -54,6 +57,7 @@ export function Dialer(props: {
   settings: SettingsRow;
   batches: ImportBatchRow[];
   dncNumbers: string[];
+  vendorDncNumbers: string[];
 }) {
   const { settings } = props;
   const [flow, dispatch] = useReducer(flowReducer, props.queue, (queue) => ({ ...initialFlow, queue }));
@@ -108,7 +112,10 @@ export function Dialer(props: {
       await Promise.race([whenDrained(), new Promise((r) => setTimeout(r, 4000))]);
       try {
         const res = await fetch(`/api/calls/${callId}/finish`, { method: 'POST' });
-        const body = (await res.json().catch(() => null)) as { prefill?: Prefill | null } | null;
+        const body = (await res.json().catch(() => null)) as { prefill?: Prefill | null; dncReview?: boolean } | null;
+        if (res.ok && body?.dncReview) {
+          setMessage('The post-call check heard a possible DNC request. The lead is held for review on its page.');
+        }
         const prefill = body?.prefill;
         if (!res.ok || !prefill || flowCallIdRef.current !== callId) return;
         setSuggestion({ callId, prefill });
@@ -192,33 +199,50 @@ export function Dialer(props: {
       phone,
       batch: props.batches.find((b) => b.id === phone.batch_id) ?? null,
       internalDnc: props.dncNumbers.includes(phone.number),
+      vendorDncElsewhere: props.vendorDncNumbers.includes(phone.number),
       settings,
       now,
     });
     return decision.ok ? null : decision.reason;
-  }, [lead, phone, props.batches, props.dncNumbers, settings, now]);
+  }, [lead, phone, props.batches, props.dncNumbers, props.vendorDncNumbers, settings, now]);
+
+  /** Bumped on every dial, so a call id found late for an earlier attempt is never attached to a later one. */
+  const attemptRef = useRef(0);
 
   const dial = useCallback(async () => {
     const device = deviceRef.current;
     if (!device || !lead || !phone || !canDial(flow)) return;
     setMessage(null);
     dispatch({ type: 'dial' });
+    const attempt = ++attemptRef.current;
     try {
       const call = await device.connect({ params: { To: phone.number, LeadId: lead.lead.id, PhoneId: phone.id } });
       callRef.current = call;
       const current = () => callRef.current === call;
+      // Without a call id no outcome (DNC included) can be saved, so keep looking for as
+      // long as the call is live, then once more after it ends.
+      let knownCallId: string | null = null;
+      const findCallId = async () => {
+        const sid = call.parameters.CallSid;
+        if (!sid) return null;
+        try {
+          return await lookupCallId(sid);
+        } catch {
+          return null;
+        }
+      };
+      const found = (callId: string) => {
+        knownCallId = callId;
+        if (attemptRef.current === attempt) dispatch({ type: 'call_id', callId });
+      };
       call.on('accept', async () => {
         if (!current()) return;
         dispatch({ type: 'accepted' });
         setActiveCall(call);
-        const sid = call.parameters.CallSid;
-        for (let attempt = 0; attempt < 6 && current(); attempt++) {
-          const callId = sid ? await lookupCallId(sid) : null;
-          if (callId) {
-            if (current()) dispatch({ type: 'call_id', callId });
-            return;
-          }
-          await new Promise((r) => setTimeout(r, 500));
+        while (current() && !knownCallId) {
+          const callId = await findCallId();
+          if (callId) return found(callId);
+          await new Promise((r) => setTimeout(r, 1000));
         }
       });
       const ended = () => {
@@ -226,6 +250,11 @@ export function Dialer(props: {
         callRef.current = null;
         setActiveCall(null);
         dispatch({ type: 'disconnected' });
+        if (!knownCallId) {
+          void findCallId().then((callId) => {
+            if (callId && !knownCallId) found(callId);
+          });
+        }
       };
       call.on('disconnect', ended);
       call.on('cancel', ended);
@@ -289,7 +318,13 @@ export function Dialer(props: {
         }
         callRef.current = null;
         setActiveCall(null);
+        // The server left the visit open (next_phone) but no phone is left here: close the round.
+        const leadToClose = savedLeavesRoundOpen(flow, result.advance) ? currentLead(flow)?.lead.id : undefined;
         dispatch({ type: 'saved', advance: result.advance });
+        if (leadToClose) {
+          const closed = await closeRound(leadToClose).catch(() => ({ ok: false, error: undefined }));
+          if (!closed.ok) setMessage(closed.error ?? 'Could not close the round for the last lead.');
+        }
         setNote('');
         setCallbackAt('');
         return true;
@@ -351,6 +386,31 @@ export function Dialer(props: {
         dispatch({ type: 'skip' });
       }),
     [exclusive, flow],
+  );
+
+  /**
+   * DNC for the whole lead. With a call id this is the normal DNC outcome; without one
+   * (the id never arrived) the lead is marked DNC directly, with the same effects.
+   */
+  const markDnc = useCallback(
+    () =>
+      exclusive(async () => {
+        const current = currentLead(flow);
+        if (!current) return;
+        if (canSaveOutcome(flow)) return void (await persist('dnc'));
+        setMessage(null);
+        callRef.current?.disconnect();
+        try {
+          const result = await markLeadDnc(current.lead.id);
+          if (!result.ok) return setMessage(result.error);
+        } catch {
+          return setMessage('Could not mark the lead DNC. Try again.');
+        }
+        callRef.current = null;
+        setActiveCall(null);
+        dispatch({ type: 'lead_closed' });
+      }),
+    [exclusive, flow, persist],
   );
 
   const submitRef = useRef(submit);
@@ -463,6 +523,9 @@ export function Dialer(props: {
             {flow.callState === 'ended' && !flow.callId && (
               <span className="text-sm text-neutral-600">No call was logged. Press N to skip this lead.</span>
             )}
+            <button type="button" className={`${btn} ml-auto`} disabled={pending} onClick={() => void markDnc()}>
+              Mark lead DNC
+            </button>
           </div>
         </section>
       )}

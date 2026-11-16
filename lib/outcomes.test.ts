@@ -14,6 +14,7 @@ const run = (outcome: string, o: { lead?: Partial<LeadRow>; hasNextPhone?: boole
     lead: lead(o.lead),
     phone: phone(),
     hasNextPhone: o.hasNextPhone ?? false,
+    leadNumbers: ['+18045550142', '+18045550199', '+18045550199'],
     settings,
     now: NOW,
     callbackAt: o.callbackAt,
@@ -59,10 +60,10 @@ describe('applyOutcome', () => {
     expect(r.lead.attempt_rounds).toBe(1);
   });
 
-  it('dnc marks the lead dnc, adds the number to the internal list and moves on', () => {
+  it('dnc marks the lead dnc, adds every number on the lead to the internal list and moves on', () => {
     const r = run('dnc', { hasNextPhone: true });
     expect(r.lead).toEqual({ status: 'dnc' });
-    expect(r.addInternalDnc).toBe('+18045550142');
+    expect(r.addInternalDnc).toEqual(['+18045550142', '+18045550199']);
     expect(r.advance).toBe('next_lead');
   });
 
@@ -121,7 +122,7 @@ describe('applyOutcome', () => {
     it('still records phone effects and lets DNC escalate a closed lead', () => {
       const r = run('dnc', { lead: { status: 'dead' } });
       expect(r.lead).toEqual({ status: 'dnc' });
-      expect(r.addInternalDnc).toBe('+18045550142');
+      expect(r.addInternalDnc).toEqual(['+18045550142', '+18045550199']);
       expect(run('bad_number', { lead: { status: 'dnc' }, hasNextPhone: true }).phone).toEqual({ status: 'dead' });
     });
   });

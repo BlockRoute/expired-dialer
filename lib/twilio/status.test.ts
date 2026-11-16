@@ -19,6 +19,7 @@ const base: CallRow = {
   note: null,
   recording_path: null,
   ai_summary: null,
+  dnc_suspected: false,
   created_at: '2026-11-15T10:00:00Z',
 };
 const T1 = '2026-11-15T10:00:05Z';

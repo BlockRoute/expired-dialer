@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { applyOutcome } from '../outcomes';
-import { callablePhones, hasNextCallablePhone, currentLead, currentPhone, dialablePhones, flowReducer, initialFlow, canDial, canSaveOutcome, canSkip, type FlowAction, type FlowLead, type FlowState } from './flow';
+import { callablePhones, hasNextCallablePhone, savedLeavesRoundOpen, currentLead, currentPhone, dialablePhones, flowReducer, initialFlow, canDial, canSaveOutcome, canSkip, type FlowAction, type FlowLead, type FlowState } from './flow';
 import type { ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from '../db/types';
 
 const NOW = new Date('2026-11-16T17:00:00Z');
@@ -55,7 +55,7 @@ describe('flowReducer', () => {
     expect(s.callState).toBe('ended');
     const first = applyOutcome({
       outcome: 'no_answer', lead: currentLead(s)!.lead, phone: currentPhone(s)!,
-      hasNextPhone: currentLead(s)!.phones.length > s.phoneIndex + 1, settings, now: NOW,
+      hasNextPhone: currentLead(s)!.phones.length > s.phoneIndex + 1, leadNumbers: [], settings, now: NOW,
     });
     expect(first.advance).toBe('next_phone');
     s = run(s, { type: 'saved', advance: first.advance });
@@ -67,10 +67,11 @@ describe('flowReducer', () => {
     // Call phone 2, mark DNC.
     s = run(connected(s, 'C2'), { type: 'disconnected' });
     const second = applyOutcome({
-      outcome: 'dnc', lead: currentLead(s)!.lead, phone: currentPhone(s)!, hasNextPhone: false, settings, now: NOW,
+      outcome: 'dnc', lead: currentLead(s)!.lead, phone: currentPhone(s)!, hasNextPhone: false,
+      leadNumbers: currentLead(s)!.phones.map((p) => p.number), settings, now: NOW,
     });
     expect(second.lead.status).toBe('dnc');
-    expect(second.addInternalDnc).toBe('+18045550102');
+    expect(second.addInternalDnc).toEqual(['+18045550102', '+18045550101']);
     s = run(s, { type: 'saved', advance: second.advance });
     expect(s.queue.map((q) => q.lead.id)).toEqual(['L2']);
     expect(currentLead(s)?.lead.id).toBe('L2');
@@ -129,8 +130,9 @@ describe('flowReducer', () => {
 });
 
 describe('callable phones (phone-level guardrails)', () => {
-  const batch = { id: 'B', scrubbed_by_vendor: true, scrub_date: '2026-11-16' } as ImportBatchRow;
-  const ctx = (dnc: string[] = []) => ({ batches: [batch], dncNumbers: dnc, settings, now: NOW });
+  // Scrubbed before the 'closed hours' instant below (Nov 15 ET), so only the hours differ.
+  const batch = { id: 'B', scrubbed_by_vendor: true, scrub_date: '2026-11-10' } as ImportBatchRow;
+  const ctx = (dnc: string[] = [], vendorDnc: string[] = []) => ({ batches: [batch], dncNumbers: dnc, vendorDncNumbers: vendorDnc, settings, now: NOW });
   const ph = (id: string, position: number, o: Partial<PhoneRow> = {}) =>
     mkPhone(id, 'L1', position, { batch_id: 'B', vendor_dnc: 'callable', ...o });
   const lead = mkLead('L1');
@@ -146,11 +148,16 @@ describe('callable phones (phone-level guardrails)', () => {
     expect(callablePhones(lead, phones, ctx(['+18045559999'])).map((p) => p.id)).toEqual(['a', 'e']);
   });
 
+  it('a number flagged do_not_call on any lead is not callable here', () => {
+    const phones = [ph('a', 1), ph('b', 2, { number: '+18045558888' })];
+    expect(callablePhones(lead, phones, ctx([], ['+18045558888'])).map((p) => p.id)).toEqual(['a']);
+  });
+
   it('phone 2 vendor-flagged: phone 1 is the last callable phone, so no_answer closes the round', () => {
     const phones = [ph('a', 1), ph('b', 2, { vendor_dnc: 'do_not_call' })];
     expect(hasNextCallablePhone(lead, phones, 'a', ctx())).toBe(false);
     const r = applyOutcome({
-      outcome: 'no_answer', lead, phone: phones[0], hasNextPhone: hasNextCallablePhone(lead, phones, 'a', ctx()), settings, now: NOW,
+      outcome: 'no_answer', lead, phone: phones[0], hasNextPhone: hasNextCallablePhone(lead, phones, 'a', ctx()), leadNumbers: [], settings, now: NOW,
     });
     expect(r.advance).toBe('next_lead');
     expect(r.lead.attempt_rounds).toBe(1);
@@ -189,5 +196,36 @@ describe('skipping after an earlier outcome on the lead', () => {
     expect(s.callId).toBeNull();
     expect(canSkip(s)).toBe(true);
     expect(currentLead(run(s, { type: 'skip' }))?.lead.id).toBe('L2');
+  });
+});
+
+describe('savedLeavesRoundOpen', () => {
+  const q = () => [entry('L1', [mkPhone('P1', 'L1', 1), mkPhone('P2', 'L1', 2)]), entry('L2', [mkPhone('P3', 'L2', 1)])];
+  it('next_phone with no phone left on this client: the round must be closed', () => {
+    let s = run(initialFlow, { type: 'load', queue: q() });
+    s = run(s, { type: 'dial' }, { type: 'accepted' }, { type: 'call_id', callId: 'C1' }, { type: 'disconnected' }, { type: 'saved', advance: 'next_phone' });
+    expect(s.phoneIndex).toBe(1);
+    expect(savedLeavesRoundOpen(s, 'next_phone')).toBe(true);
+  });
+  it('false when another phone follows, or the server closed the round (next_lead)', () => {
+    const s = run(initialFlow, { type: 'load', queue: q() });
+    expect(savedLeavesRoundOpen(s, 'next_phone')).toBe(false);
+    expect(savedLeavesRoundOpen(s, 'next_lead')).toBe(false);
+  });
+});
+
+describe('lead_closed (Mark lead DNC without a call id)', () => {
+  it('moves to the next lead even when the call id never arrived', () => {
+    let s = run(initialFlow, { type: 'load', queue: [entry('L1', [mkPhone('P1', 'L1', 1)]), entry('L2', [mkPhone('P3', 'L2', 1)])] });
+    s = run(s, { type: 'dial' }, { type: 'accepted' }, { type: 'disconnected' });
+    expect(canSaveOutcome(s)).toBe(false);
+    s = run(s, { type: 'lead_closed' });
+    expect(currentLead(s)?.lead.id).toBe('L2');
+    expect(s).toMatchObject({ callState: 'idle', callId: null, phoneIndex: 0 });
+  });
+  it('a late call id from the previous lead is ignored once idle', () => {
+    let s = run(initialFlow, { type: 'load', queue: [entry('L1', [mkPhone('P1', 'L1', 1)]), entry('L2', [mkPhone('P3', 'L2', 1)])] });
+    s = run(s, { type: 'dial' }, { type: 'lead_closed' }, { type: 'call_id', callId: 'C-old' });
+    expect(s.callId).toBeNull();
   });
 });

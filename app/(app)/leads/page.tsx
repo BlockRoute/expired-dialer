@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { fetchAll } from '@/lib/supabase/fetch-all';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { ImportBatchRow, LeadRow } from '@/lib/db/types';
 
@@ -18,13 +19,15 @@ const STATUS_LABEL: Record<LeadRow['status'], string> = {
 
 export default async function LeadsPage() {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from('leads')
-    .select('*, import_batches(vendor, file_name)')
-    .order('expired_date', { ascending: false, nullsFirst: false })
-    .limit(1000);
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as Row[];
+  // Ordered pages (id breaks ties) so lists past PostgREST's 1,000-row cap are complete.
+  const rows = await fetchAll<Row>((from, to) =>
+    supabase
+      .from('leads')
+      .select('*, import_batches(vendor, file_name)')
+      .order('expired_date', { ascending: false, nullsFirst: false })
+      .order('id')
+      .range(from, to),
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -55,7 +58,10 @@ export default async function LeadsPage() {
                   <Link className="underline" href={`/leads/${l.id}`}>{l.property_address ?? 'Unknown address'}</Link>
                 </td>
                 <td className="pr-3">{l.owner_full_name ?? ''}</td>
-                <td className="pr-3">{STATUS_LABEL[l.status]}</td>
+                <td className="pr-3">
+                  {STATUS_LABEL[l.status]}
+                  {l.dnc_review_at && l.status !== 'dnc' && <span className="ml-1 text-red-700">· DNC review</span>}
+                </td>
                 <td className="pr-3">{l.import_batches?.vendor ?? l.import_batches?.file_name ?? ''}</td>
                 <td className="pr-3">{l.expired_date ?? ''}</td>
                 <td>{l.attempt_rounds}</td>

@@ -3,7 +3,7 @@ import type { ImportBatchRow, LeadRow, PhoneRow, SettingsRow } from './db/types'
 
 export type BlockReason =
   | 'vendor_dnc' | 'internal_dnc' | 'unscrubbed' | 'scrub_stale' | 'outside_hours'
-  | 'out_of_state' | 'lead_closed' | 'phone_dead' | 'cooldown' | 'max_rounds';
+  | 'out_of_state' | 'lead_closed' | 'dnc_review' | 'phone_dead' | 'cooldown' | 'max_rounds';
 
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 const HARD_OPEN_S = 8 * 3600;
@@ -27,20 +27,24 @@ export function checkDial(input: {
   phone: PhoneRow;
   batch: ImportBatchRow | null;
   internalDnc: boolean;
+  /** The number is vendor-flagged do_not_call on any phones row (another lead's included). */
+  vendorDncElsewhere: boolean;
   settings: SettingsRow;
   now: Date;
 }): { ok: true } | { ok: false; reason: BlockReason } {
-  const { lead, phone, batch, internalDnc, settings, now } = input;
+  const { lead, phone, batch, internalDnc, vendorDncElsewhere, settings, now } = input;
   const block = (reason: BlockReason) => ({ ok: false as const, reason });
   const east = easternParts(now);
 
   if (internalDnc) return block('internal_dnc');
-  if (phone.vendor_dnc === 'do_not_call') return block('vendor_dnc');
+  if (phone.vendor_dnc === 'do_not_call' || vendorDncElsewhere) return block('vendor_dnc');
   if (!batch || (phone.vendor_dnc === 'unknown' && !batch.scrubbed_by_vendor)) return block('unscrubbed');
-  // Negated <= so an unparseable scrub_date (NaN) fails closed.
-  if (!(dayNumber(east.date) - dayNumber(batch.scrub_date) <= MAX_SCRUB_AGE_DAYS)) return block('scrub_stale');
+  // Negated range so an unparseable scrub_date (NaN) fails closed; a future date (typo) is stale too.
+  const scrubAge = dayNumber(east.date) - dayNumber(batch.scrub_date);
+  if (!(scrubAge >= 0 && scrubAge <= MAX_SCRUB_AGE_DAYS)) return block('scrub_stale');
   if (lead.status === 'out_of_state') return block('out_of_state');
   if (lead.status === 'dnc' || lead.status === 'dead' || lead.status === 'appointment') return block('lead_closed');
+  if (lead.dnc_review_at != null) return block('dnc_review');
   if (phone.status !== 'ok') return block('phone_dead');
   if (!(lead.attempt_rounds < settings.max_rounds)) return block('max_rounds');
   if (lead.next_eligible_at != null && !(new Date(lead.next_eligible_at).getTime() <= now.getTime())) return block('cooldown');
