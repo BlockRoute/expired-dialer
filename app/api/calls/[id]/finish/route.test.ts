@@ -82,6 +82,31 @@ describe('POST /api/calls/[id]/finish', () => {
     expect(updates).toEqual([{ ai_summary: { summary: 'S', note: 'N', next_step: 'X' } }]);
   });
 
+  it('summary asks Sonnet 5.5 at low effort with room to finish, inside a Netlify function', async () => {
+    jev.mockResolvedValue(jevOk);
+    runClaude.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"summary":"S","note":"N","next_step":"X"}' }] });
+    await call();
+    await settle();
+    const args = runClaude.mock.calls[0][0];
+    expect(args.effort).toBe('low');
+    expect(args.thinking).toBeUndefined(); // disabled is a 400 on Sonnet 5.5; adaptive at low effort
+    expect(args.maxTokens).toBeGreaterThanOrEqual(4000);
+    expect(args.requestOptions.timeout).toBeLessThanOrEqual(15_000);
+    expect(args.requestOptions.maxRetries).toBe(0);
+  });
+
+  it('a summary cut off at max_tokens is not saved and is logged by name only', async () => {
+    jev.mockResolvedValue(jevOk);
+    runClaude.mockResolvedValue({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"summary":"Thursday' }] });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await call();
+    await settle();
+    expect(updates).toEqual([]);
+    expect(JSON.stringify(err.mock.calls)).not.toContain('Thursday');
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
   it('404 for an unknown call', async () => {
     callRow = null;
     expect((await call()).status).toBe(404);

@@ -19,7 +19,10 @@ type RunArgs = {
   tools?: Anthropic.Tool[];
   model?: string;
   maxTokens?: number;
-  thinking?: boolean; // adaptive thinking on/off (off for simple extraction)
+  // Sent only when given. Omitting it runs adaptive thinking on the 5.5 models, and
+  // {type:'disabled'} is a 400 on Sonnet 5.5 (allowed on Haiku 5.5 at effort high or below).
+  thinking?: Anthropic.ThinkingConfigParam;
+  effort?: NonNullable<Anthropic.OutputConfig['effort']>; // output_config.effort; model default when omitted
   toolChoice?: Anthropic.MessageCreateParams['tool_choice'];
   requestOptions?: { timeout?: number; maxRetries?: number };
 };
@@ -39,7 +42,8 @@ export async function runClaude(args: RunArgs): Promise<Anthropic.Message> {
     tools,
     model = DEFAULT_MODEL,
     maxTokens = 8_000,
-    thinking = false,
+    thinking,
+    effort,
     toolChoice,
     requestOptions,
   } = args;
@@ -51,7 +55,8 @@ export async function runClaude(args: RunArgs): Promise<Anthropic.Message> {
     messages,
     ...(tools && tools.length ? { tools } : {}),
     ...(toolChoice ? { tool_choice: toolChoice } : {}),
-    ...(thinking ? { thinking: { type: 'adaptive' } } : {}),
+    ...(thinking ? { thinking } : {}),
+    ...(effort ? { output_config: { effort } } : {}),
   }, requestOptions);
 }
 
@@ -63,7 +68,8 @@ export function streamClaude(args: RunArgs) {
     tools,
     model = DEFAULT_MODEL,
     maxTokens = 16_000,
-    thinking = false,
+    thinking,
+    effort,
     toolChoice,
   } = args;
 
@@ -74,7 +80,8 @@ export function streamClaude(args: RunArgs) {
     messages,
     ...(tools && tools.length ? { tools } : {}),
     ...(toolChoice ? { tool_choice: toolChoice } : {}),
-    ...(thinking ? { thinking: { type: 'adaptive' } } : {}),
+    ...(thinking ? { thinking } : {}),
+    ...(effort ? { output_config: { effort } } : {}),
   });
 }
 
@@ -85,6 +92,13 @@ export function extractText(message: Anthropic.Message): string {
     .map((b) => b.text)
     .join('\n')
     .trim();
+}
+
+// Text of a reply that finished. Null when it was cut off (max_tokens), refused, or
+// came back with no text (thinking can use the whole budget): callers treat that as a failure.
+export function usableText(message: Anthropic.Message): string | null {
+  if (message.stop_reason === 'max_tokens' || message.stop_reason === 'refusal') return null;
+  return extractText(message) || null;
 }
 
 // Pull tool_use blocks for the manual tool loop.

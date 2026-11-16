@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireUserApi } from '@/lib/auth';
 import { withApiErrors } from '@/lib/server/api-errors';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { extractJson, extractText, runClaude } from '@/lib/ai/anthropic';
+import { extractJson, runClaude, usableText } from '@/lib/ai/anthropic';
 import { jev, type JevAnswers } from '@/lib/typesafe/client';
 import { cardChoice, dncRequestNoul } from '@/lib/typesafe/questions';
 import { decideCards } from '@/lib/coach/decide';
@@ -61,7 +61,10 @@ async function claudeCard(ownerSaid: string, transcriptSoFar: string, firstName:
     const message = await runClaude({
       system: FALLBACK_SYSTEM,
       model: FALLBACK_MODEL,
-      maxTokens: 200,
+      // Lowest latency on Haiku 5.5: thinking off (allowed at effort high or below), effort low.
+      thinking: { type: 'disabled' },
+      effort: 'low',
+      maxTokens: 300,
       requestOptions: { timeout: FALLBACK_TIMEOUT_MS, maxRetries: 0 },
       messages: [
         {
@@ -70,7 +73,9 @@ async function claudeCard(ownerSaid: string, transcriptSoFar: string, firstName:
         },
       ],
     });
-    const parsed = extractJson<{ title?: unknown; say?: unknown; why?: unknown }>(extractText(message));
+    const text = usableText(message);
+    if (!text) return null;
+    const parsed = extractJson<{ title?: unknown; say?: unknown; why?: unknown }>(text);
     if (!parsed || typeof parsed.say !== 'string' || typeof parsed.title !== 'string') return null;
     const say = truncateWords(parsed.say, MAX_SAY_WORDS);
     const title = truncateWords(parsed.title, 8);

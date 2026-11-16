@@ -140,6 +140,30 @@ describe('POST /api/coach', () => {
     expect(runClaude.mock.calls[0][0].model).toBe('claude-haiku-5-5');
   });
 
+  it('fallback asks Haiku 5.5 for the lowest-latency reply: thinking disabled, effort low', async () => {
+    jev.mockResolvedValue({
+      card: { type: 'choice', choice: 'none', confidence: 0.9, probabilities: { none: 0.9, a: 0.1 } },
+      dnc: { type: 'noul', noul: 0.01 },
+    });
+    runClaude.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"title":"T","say":"S","why":"y"}' }] });
+    await POST(req());
+    const args = runClaude.mock.calls[0][0];
+    expect(args.model).toBe('claude-haiku-5-5');
+    expect(args.thinking).toEqual({ type: 'disabled' });
+    expect(args.effort).toBe('low');
+    expect(args.maxTokens).toBeGreaterThanOrEqual(200);
+  });
+
+  it('a fallback cut off at max_tokens is treated as a failure (paused)', async () => {
+    jev.mockResolvedValue({
+      card: { type: 'choice', choice: 'none', confidence: 0.9, probabilities: { none: 0.9, a: 0.1 } },
+      dnc: { type: 'noul', noul: 0.01 },
+    });
+    runClaude.mockResolvedValue({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"title":"T","say":"S","why":"y"}' }] });
+    const body = await (await POST(req())).json();
+    expect(body).toMatchObject({ cards: [], paused: true, dncP: 0.01 });
+  });
+
   it('pair returns two cards with runner-up stored', async () => {
     jev.mockResolvedValue({
       card: { type: 'choice', choice: 'a', confidence: 0.5, probabilities: { a: 0.5, b: 0.45, none: 0.05 } },

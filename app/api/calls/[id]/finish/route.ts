@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireUserApi } from '@/lib/auth';
 import { withApiErrors } from '@/lib/server/api-errors';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { extractJson, extractText, runClaude } from '@/lib/ai/anthropic';
+import { extractJson, runClaude, usableText } from '@/lib/ai/anthropic';
 import { jev } from '@/lib/typesafe/client';
 import { appointmentNoul, callbackTimeNoul, dncRequestNoul, outcomeChoice } from '@/lib/typesafe/questions';
 import { OUTCOME_CRITERIA, formatCallTranscript, hasOwnerSpeech, prefillFromAnswers } from '@/lib/postcall/prefill';
@@ -11,7 +11,9 @@ import { OUTCOME_CRITERIA, formatCallTranscript, hasOwnerSpeech, prefillFromAnsw
 export const dynamic = 'force-dynamic';
 
 const SUMMARY_MODEL = 'claude-sonnet-5-5';
-const SUMMARY_TIMEOUT_MS = 45_000;
+// after() work runs inside the same Netlify function invocation: Jev (8 s) plus one
+// summary attempt (15 s, no retry) stays under the 26 s synchronous limit (see README).
+const SUMMARY_TIMEOUT_MS = 15_000;
 const JEV_TIMEOUT_MS = 8_000;
 
 // Byte-stable: the transcript goes in the user message, never here.
@@ -31,11 +33,18 @@ async function writeSummary(db: ReturnType<typeof createSupabaseAdminClient>, ca
     const message = await runClaude({
       system: SUMMARY_SYSTEM,
       model: SUMMARY_MODEL,
-      maxTokens: 600,
-      requestOptions: { timeout: SUMMARY_TIMEOUT_MS, maxRetries: 1 },
+      // Sonnet 5.5 cannot disable thinking; low effort keeps it short, and the budget leaves room for the JSON.
+      effort: 'low',
+      maxTokens: 4_000,
+      requestOptions: { timeout: SUMMARY_TIMEOUT_MS, maxRetries: 0 },
       messages: [{ role: 'user', content: `Call transcript:\n${transcript}` }],
     });
-    const parsed = extractJson<Partial<Summary>>(extractText(message));
+    const text = usableText(message);
+    if (!text) {
+      console.error('call summary incomplete', callId, message.stop_reason ?? 'no_text');
+      return;
+    }
+    const parsed = extractJson<Partial<Summary>>(text);
     if (!parsed || [parsed.summary, parsed.note, parsed.next_step].some((v) => typeof v !== 'string')) {
       console.error('call summary unparseable', callId);
       return;

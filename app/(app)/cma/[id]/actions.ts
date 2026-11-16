@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import { requireUser } from '@/lib/auth';
-import { aiEnabled, extractText, runClaude } from '@/lib/ai/anthropic';
+import { aiEnabled, runClaude, usableText } from '@/lib/ai/anthropic';
 import { cleanNote, DRAFT_SYSTEM_PROMPT, parseDraft } from '@/lib/cma/copy';
 import { includedComps, recompute, type StoredComp } from '@/lib/cma/edit';
 import { makeSlug } from '@/lib/cma/slug';
@@ -121,10 +121,13 @@ export async function draftNotes(id: string, excluded: unknown): Promise<EditRes
       model: MODEL,
       system: DRAFT_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 400,
-      requestOptions: { timeout: DRAFT_TIMEOUT_MS, maxRetries: 1 },
+      // Sonnet 5.5 cannot disable thinking; low effort keeps it short, and the budget leaves room for the JSON.
+      effort: 'low',
+      maxTokens: 4_000,
+      requestOptions: { timeout: DRAFT_TIMEOUT_MS, maxRetries: 0 }, // one attempt fits a 26 s Netlify function
     });
-    const draft = parseDraft(extractText(message));
+    const text = usableText(message);
+    const draft = text ? parseDraft(text) : null;
     if (!draft) return { ok: false, error: 'The draft came back unusable. Try again.' };
     return { ok: true, ...draft };
   } catch {
