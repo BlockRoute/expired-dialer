@@ -10,6 +10,8 @@
     // Adapter default: fetch() to public URLs goes over the public internet.
     "global_fetch_strictly_public"
   ],
+  // Workers Logs: request + console output in the dashboard (Observability tab).
+  "observability": { "enabled": true },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
