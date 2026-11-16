@@ -9,6 +9,11 @@ vi.mock('@/lib/twilio/client', () => ({ updateTwilioCall: (...args: unknown[]) =
 
 import { POST } from './route';
 
+const withStorage = () => ({
+  ...db.client,
+  storage: { from: () => ({ createSignedUrl: async (path: string) => ({ data: { signedUrl: `https://storage.test/${path}?token=t` }, error: null }) }) },
+});
+
 const drop = (body: object) => POST(new Request('http://x/api/twilio/vm-drop', { method: 'POST', body: JSON.stringify(body) }));
 
 beforeEach(() => {
@@ -25,5 +30,19 @@ describe('POST /api/twilio/vm-drop', () => {
     expect(res.status).toBe(409);
     expect(update).not.toHaveBeenCalled();
     expect(db.log.filter((q) => q.op === 'update')).toEqual([]);
+  });
+
+  it('plays the drop on the child leg, records left_vm, then hangs up the parent, in that order', async () => {
+    db.tables.calls[0].outcome_saved_at = null;
+    const client = withStorage();
+    db = { ...db, client: client as unknown as typeof db.client };
+    update.mockResolvedValue(undefined);
+    const res = await drop({ callId: 'c1', dropId: 'd1' });
+    expect(res.status).toBe(200);
+    expect(update.mock.calls).toEqual([
+      ['CA2', { Twiml: expect.stringContaining('<Play>') }],
+      ['CA1', { Status: 'completed' }],
+    ]);
+    expect(db.log.filter((q) => q.op === 'update').map((q) => q.payload)).toEqual([{ outcome: 'left_vm' }]);
   });
 });

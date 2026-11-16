@@ -100,6 +100,17 @@ describe('updateTwilioCall (replaces client.calls(sid).update)', () => {
     });
   });
 
+  it('passes a 30 s abort signal (the SDK default timeout)', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await updateTwilioCall('CA1', { Status: 'completed' });
+    expect(timeout).toHaveBeenCalledWith(30_000);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.signal).toBe(timeout.mock.results[0].value);
+    timeout.mockRestore();
+  });
+
   it('POSTs Status=completed for the parent hangup', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

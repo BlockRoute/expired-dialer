@@ -2,6 +2,8 @@
 if (typeof window !== 'undefined') throw new Error('lib/twilio/client is server-only');
 
 const TTL_SECONDS = 3600;
+// The twilio SDK's default HTTP request timeout.
+const REST_TIMEOUT_MS = 30_000;
 
 const base64url = (bytes: Uint8Array) => {
   let binary = '';
@@ -51,6 +53,7 @@ export async function updateTwilioCall(callSid: string, update: { Twiml: string 
       method: 'POST',
       headers: { authorization: `Basic ${auth}`, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(update),
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
     },
   );
   if (!res.ok) {

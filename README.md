@@ -92,10 +92,15 @@ plan's 10 ms CPU limit per request is too low for Next.js server rendering.
    ```
 
    The first `wrangler secret put` creates the Worker if it does not exist yet.
-3. `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (or
-   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`) are inlined at **build** time: they must be in
-   the shell environment or `.env.local` when `pnpm run deploy` runs. Setting them only as
-   Worker secrets is not enough.
+3. `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`) are inlined at **build** time. Pass them inline on the
+   build/deploy command; setting them only as Worker secrets is not enough:
+
+   ```sh
+   NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co \
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_... \
+   pnpm run deploy
+   ```
 4. `APP_URL` is the Worker's public URL: `https://expired-dialer.<subdomain>.workers.dev`,
    or a custom domain attached to the Worker. No trailing path.
 5. Supabase Auth > URL Configuration: set the Site URL to `APP_URL` and add
@@ -108,9 +113,10 @@ plan's 10 ms CPU limit per request is too low for Next.js server rendering.
    and serves the same Worker locally on the Workers runtime; it reads runtime values from
    a gitignored `.dev.vars` file (same names as the table above).
 
-Note: `opennextjs-cloudflare build` also copies the values in `.env`, `.env.production`
-and `.env.local` into the Worker bundle as fallbacks (Worker secrets take precedence).
-Build from a machine whose `.env.local` holds nothing you would not upload to Cloudflare.
+Warning: `opennextjs-cloudflare build` copies every value in `.env`, `.env.production`,
+`.env.local` and `.env.production.local` into the Worker bundle as fallbacks (Worker
+secrets take precedence). Do not rely on those files for the deploy, and build from a
+checkout whose `.env*` files hold nothing you would not upload to Cloudflare.
 
 Time limits: Workers HTTP requests have no wall-clock limit while the client stays
 connected (CPU time is what is metered), and work handed to `after()` runs through the
