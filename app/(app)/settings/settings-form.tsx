@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import type { Hours, SettingsRow } from '@/lib/db/types';
 import { outcomeLabel } from '@/lib/outcomes';
-import { ALL_OUTCOMES, DAY_KEYS, RING_OPTIONS } from '@/lib/settings';
+import { ALL_OUTCOMES, DAY_KEYS, LOCKED_OUTCOMES, RING_OPTIONS } from '@/lib/settings';
 import { saveSettings } from './actions';
 
 const input = 'rounded border border-neutral-300 px-2 py-1 text-sm';
@@ -106,17 +106,18 @@ export function SettingsForm({ settings }: { settings: SettingsRow }) {
 
       <div className="space-y-2">
         <h2 className="font-medium">Outcomes</h2>
-        <p className="text-xs text-neutral-500">Turn outcomes on or off. DNC always stays on.</p>
+        <p className="text-xs text-neutral-500">Turn outcomes on or off. DNC and Left VM stay on because the dialer saves them itself.</p>
         <div className="grid grid-cols-2 gap-1 text-sm">
           {ALL_OUTCOMES.map((o) => (
             <label key={o} className="flex items-center gap-2">
               <input
                 type="checkbox"
                 checked={outcomes.includes(o)}
-                disabled={o === 'dnc'}
+                disabled={o in LOCKED_OUTCOMES}
                 onChange={(e) => setOutcomes((cur) => (e.target.checked ? [...cur, o] : cur.filter((x) => x !== o)))}
               />
               {outcomeLabel(o)}
+              {o in LOCKED_OUTCOMES && <span className="text-xs text-neutral-500">({LOCKED_OUTCOMES[o]})</span>}
             </label>
           ))}
         </div>

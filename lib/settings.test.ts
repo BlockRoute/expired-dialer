@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_OUTCOMES,
+  canonicalHours,
+  canDeactivateCard,
   mostOverridden,
   normalizeOutcomes,
   overlapWarning,
@@ -62,8 +64,8 @@ describe('validateRetry', () => {
 
 describe('normalizeOutcomes', () => {
   it('keeps canonical order and dedupes', () => {
-    const r = normalizeOutcomes(['dnc', 'connected', 'connected']);
-    expect(r).toEqual({ ok: true, outcomes: ['connected', 'dnc'] });
+    const r = normalizeOutcomes(['dnc', 'left_vm', 'connected', 'connected']);
+    expect(r).toEqual({ ok: true, outcomes: ['connected', 'left_vm', 'dnc'] });
   });
   it('rejects a list without dnc', () => {
     expect(normalizeOutcomes(ALL_OUTCOMES.filter((o) => o !== 'dnc')).ok).toBe(false);
@@ -111,5 +113,27 @@ describe('topProbabilities / overlapWarning', () => {
     expect(overlapWarning(probs, 'b', 'b')).toBeNull();
     expect(overlapWarning({ a: 0.7, b: 0.25, c: 0.05 }, 'a', 'b')).toBeNull();
     expect(overlapWarning({ a: 0.5, c: 0.35, b: 0.31 }, 'a', 'b')).toBeNull();
+  });
+});
+
+describe('system outcomes', () => {
+  it('rejects lists missing left_vm', () => {
+    expect(normalizeOutcomes(ALL_OUTCOMES.filter((o) => o !== 'left_vm')).ok).toBe(false);
+  });
+});
+
+describe('canonicalHours', () => {
+  it('keeps only the seven day keys', () => {
+    const out = canonicalHours({ ...week(['09:00', '20:00']), extra: ['01:00', '02:00'] });
+    expect(Object.keys(out)).toEqual(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
+    expect(out.mon).toEqual(['09:00', '20:00']);
+    expect(out.sun).toBeNull();
+  });
+});
+
+describe('canDeactivateCard', () => {
+  it('refuses to deactivate the last active card', () => {
+    expect(canDeactivateCard(1)).toBe(false);
+    expect(canDeactivateCard(2)).toBe(true);
   });
 });

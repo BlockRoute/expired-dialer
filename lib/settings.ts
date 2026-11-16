@@ -1,4 +1,4 @@
-import type { CoachAction, SettingsRow } from './db/types';
+import type { CoachAction, DayHours, Hours, SettingsRow } from './db/types';
 
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -31,6 +31,15 @@ export function validateHours(hours: unknown): Result {
   return { ok: true };
 }
 
+/** Rebuilds hours as exactly {mon..sun}, dropping any extra keys. Call after validateHours. */
+export function canonicalHours(hours: unknown): Hours {
+  const h = hours as Record<string, DayHours>;
+  return Object.fromEntries(DAYS.map((d) => [d, h[d] === null ? null : [h[d]![0], h[d]![1]]])) as Hours;
+}
+
+/** The coach needs at least one active card. */
+export const canDeactivateCard = (activeCount: number) => activeCount > 1;
+
 export const RING_OPTIONS = [20, 25, 30, 45] as const;
 
 export function validateRetry(r: { max_rounds: number; round_gap_hours: number; ring_timeout_s: number }): Result {
@@ -47,11 +56,19 @@ export const ALL_OUTCOMES = [
   'appointment_set', 'callback_requested', 'not_interested', 'relisted_elsewhere', 'off_market_or_sold',
 ] as const;
 
-/** Enable/disable only: known keys, canonical order, `dnc` always on. */
+/** Outcomes the system saves for itself (dnc escalation, voicemail drop); disabling them breaks the dialer. */
+export const LOCKED_OUTCOMES: Record<string, string> = {
+  dnc: 'Always on: DNC requests must be recordable.',
+  left_vm: 'Always on: the dialer saves it after a voicemail drop.',
+};
+
+/** Enable/disable only: known keys, canonical order, locked outcomes always on. */
 export function normalizeOutcomes(list: string[]): { ok: true; outcomes: string[] } | { ok: false; error: string } {
   const known = new Set<string>(ALL_OUTCOMES);
   if (list.some((o) => !known.has(o))) return fail('Unknown outcome.');
-  if (!list.includes('dnc')) return fail('The DNC outcome cannot be disabled.');
+  for (const k of Object.keys(LOCKED_OUTCOMES)) {
+    if (!list.includes(k)) return fail(`The ${k} outcome cannot be disabled.`);
+  }
   const on = new Set(list);
   return { ok: true, outcomes: ALL_OUTCOMES.filter((o) => on.has(o)) };
 }

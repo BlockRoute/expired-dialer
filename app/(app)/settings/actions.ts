@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { requireUser } from '@/lib/auth';
 import type { SettingsRow, VoicemailDrop } from '@/lib/db/types';
 import { normalizePhone } from '@/lib/phone';
-import { normalizeOutcomes, validateHours, validateRetry } from '@/lib/settings';
+import { canonicalHours, normalizeOutcomes, validateHours, validateRetry } from '@/lib/settings';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -45,7 +45,7 @@ export async function saveSettings(input: unknown): Promise<ActionResult> {
     .from('settings')
     .update({
       caller_id: callerId,
-      hours: v.hours,
+      hours: canonicalHours(v.hours),
       max_rounds: v.max_rounds,
       round_gap_hours: v.round_gap_hours,
       ring_timeout_s: v.ring_timeout_s,
@@ -102,6 +102,7 @@ export async function addVoicemailDrop(input: unknown): Promise<ActionResult> {
     await supabase.storage.from('vm-drops').remove([path]);
     return fail(`You can keep up to ${MAX_DROPS} voicemail drops.`);
   }
+  if (drops.some((d) => d.id === parsed.data.id)) return fail('That recording is already saved.');
   const next: VoicemailDrop[] = [...drops, { id: parsed.data.id, label: parsed.data.label, path }];
   const { error: upErr } = await supabase.from('settings').update({ voicemail_drops: next }).eq('id', 1);
   if (upErr) return fail('Could not save the voicemail drop.');

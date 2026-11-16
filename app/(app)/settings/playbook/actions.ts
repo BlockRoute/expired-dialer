@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireUser } from '@/lib/auth';
 import type { PlaybookCardRow } from '@/lib/db/types';
-import { overlapWarning, topProbabilities, validateCardKey } from '@/lib/settings';
+import { canDeactivateCard, overlapWarning, topProbabilities, validateCardKey } from '@/lib/settings';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { jev } from '@/lib/typesafe/client';
 import { cardChoice } from '@/lib/typesafe/questions';
@@ -49,6 +49,14 @@ export async function setCardActive(id: string, active: boolean): Promise<Result
   await requireUser();
   if (!z.uuid().safeParse(id).success) return fail('Invalid card.');
   const supabase = await createSupabaseServerClient();
+  if (!active) {
+    const { count, error: cErr } = await supabase
+      .from('playbook_cards')
+      .select('*', { count: 'exact', head: true })
+      .eq('active', true);
+    if (cErr) return fail('Could not update the card.');
+    if (!canDeactivateCard(count ?? 0)) return fail('Keep at least one active card; the coach needs something to choose from.');
+  }
   const { error } = await supabase.from('playbook_cards').update({ active }).eq('id', id);
   if (error) return fail('Could not update the card.');
   revalidatePath('/settings/playbook');
@@ -90,6 +98,7 @@ export async function testCard(input: unknown): Promise<TestResult> {
     if (a.type !== 'choice') return { ok: false, error: 'Unexpected answer from Jev.' };
     return { ok: true, top: topProbabilities(a.probabilities), warning: overlapWarning(a.probabilities, intendedKey, candidateKey) };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Jev request failed.' };
+    console.error('testCard jev failed', e instanceof Error ? e.name : 'unknown');
+    return { ok: false, error: 'The test request failed. Try again.' };
   }
 }
