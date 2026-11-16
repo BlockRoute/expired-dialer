@@ -11,8 +11,8 @@ import { OUTCOME_CRITERIA, formatCallTranscript, hasOwnerSpeech, prefillFromAnsw
 export const dynamic = 'force-dynamic';
 
 const SUMMARY_MODEL = 'claude-sonnet-5-5';
-// after() work runs inside the same Netlify function invocation: Jev (8 s) plus one
-// summary attempt (15 s, no retry) stays under the 26 s synchronous limit (see README).
+// Jev (8 s) runs before the response; the one summary attempt (15 s, no retry) runs in
+// after(), which OpenNext hands to the Worker's waitUntil (~30 s after the response; see README).
 const SUMMARY_TIMEOUT_MS = 15_000;
 const JEV_TIMEOUT_MS = 8_000;
 const DNC_THRESHOLD = 0.5;

@@ -85,7 +85,7 @@ describe('POST /api/calls/[id]/finish', () => {
     expect(updates).toEqual([{ ai_summary: { summary: 'S', note: 'N', next_step: 'X' } }]);
   });
 
-  it('summary asks Sonnet 5.5 at low effort with room to finish, inside a Netlify function', async () => {
+  it('summary asks Sonnet 5.5 at low effort with room to finish, inside the waitUntil window', async () => {
     jev.mockResolvedValue(jevOk);
     runClaude.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"summary":"S","note":"N","next_step":"X"}' }] });
     await call();

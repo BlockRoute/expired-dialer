@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 const CACHE_DAYS = 7;
 const MISS_CACHE_MS = 24 * 3_600_000;
-// The whole RealtyAPI search must finish well inside a Netlify function (26 s, see README).
+// The whole RealtyAPI search is bounded so the dialer gets an answer quickly (see README).
 const SEARCH_BUDGET_MS = 20_000;
 // A pending marker older than this belongs to a function that was killed; it is retired.
 const PENDING_STALE_MS = 60_000;

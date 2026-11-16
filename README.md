@@ -1,6 +1,6 @@
 # Expired Dialer
 
-Single-user expired-listing cold-calling app (Next.js 16, Supabase, Twilio Voice, Netlify).
+Single-user expired-listing cold-calling app (Next.js 16, Supabase, Twilio Voice, Cloudflare Workers).
 
 ## Setup
 
@@ -25,7 +25,8 @@ Single-user expired-listing cold-calling app (Next.js 16, Supabase, Twilio Voice
    passes `shouldCreateUser: false`, but the server setting is the real guard.
 5. `pnpm dev`, open `/login`, request a sign-in link.
 
-Commands: `pnpm test` (Vitest), `pnpm build`, `pnpm lint`.
+Commands: `pnpm test` (Vitest), `pnpm build`, `pnpm lint`, `pnpm run preview` (local Workers
+runtime), `pnpm run deploy` (see Hosting; plain `pnpm deploy` is a built-in pnpm command).
 
 ## Environment variables
 
@@ -66,16 +67,60 @@ Use one number consistently; there is no number rotation.
 
 ## Hosting
 
-Netlify (`netlify.toml`): build `pnpm build`, Node 24, pnpm 10.27.0. Set the env vars
-above in the Netlify site settings.
+Cloudflare Workers via the OpenNext adapter (`@opennextjs/cloudflare`; config in
+`wrangler.jsonc` and `open-next.config.ts`). Use the **Workers Paid plan ($5/mo)**: the Free
+plan's 10 ms CPU limit per request is too low for Next.js server rendering.
 
-Function time limit (assumption): the server code is sized for Netlify's 26 s synchronous
-function limit. The Quick CMA stops its RealtyAPI search after 20 s (6 s per request) and
-answers `error`, recording the credits spent; the post-call route's Jev check (8 s) plus
-one Claude summary attempt (15 s, no retry) run inside the same invocation; the CMA note
-draft is one 20 s attempt. If the site's limit is lower (10 s on some plans), lower
-`SEARCH_BUDGET_MS` in `app/api/cma/route.ts` and `SUMMARY_TIMEOUT_MS` in
-`app/api/calls/[id]/finish/route.ts` to match.
+1. `pnpm exec wrangler login` (once, on your machine).
+2. Server secrets, one at a time (each prompts for the value):
+
+   ```sh
+   pnpm exec wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+   pnpm exec wrangler secret put ALLOWED_EMAIL
+   pnpm exec wrangler secret put APP_URL
+   pnpm exec wrangler secret put TWILIO_ACCOUNT_SID
+   pnpm exec wrangler secret put TWILIO_AUTH_TOKEN
+   pnpm exec wrangler secret put TWILIO_API_KEY_SID
+   pnpm exec wrangler secret put TWILIO_API_KEY_SECRET
+   pnpm exec wrangler secret put TWILIO_TWIML_APP_SID
+   pnpm exec wrangler secret put TWILIO_CALLER_ID
+   pnpm exec wrangler secret put DANIEL_CELL
+   pnpm exec wrangler secret put DEEPGRAM_API_KEY
+   pnpm exec wrangler secret put TYPESAFE_API_KEY
+   pnpm exec wrangler secret put ANTHROPIC_API_KEY
+   pnpm exec wrangler secret put REALTYAPI_KEY
+   ```
+
+   The first `wrangler secret put` creates the Worker if it does not exist yet.
+3. `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (or
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`) are inlined at **build** time: they must be in
+   the shell environment or `.env.local` when `pnpm run deploy` runs. Setting them only as
+   Worker secrets is not enough.
+4. `APP_URL` is the Worker's public URL: `https://expired-dialer.<subdomain>.workers.dev`,
+   or a custom domain attached to the Worker. No trailing path.
+5. Supabase Auth > URL Configuration: set the Site URL to `APP_URL` and add
+   `${APP_URL}/auth/callback` to the redirect URLs.
+6. Twilio console, as in the one-time steps above: TwiML App Voice URL
+   `${APP_URL}/api/twilio/voice` (POST) and the number's incoming-call webhook
+   `${APP_URL}/api/twilio/inbound`. Webhook signatures are checked against `APP_URL`, so
+   these must use exactly the same origin.
+7. `pnpm run deploy` builds (`opennextjs-cloudflare build`) and deploys. `pnpm run preview` builds
+   and serves the same Worker locally on the Workers runtime; it reads runtime values from
+   a gitignored `.dev.vars` file (same names as the table above).
+
+Note: `opennextjs-cloudflare build` also copies the values in `.env`, `.env.production`
+and `.env.local` into the Worker bundle as fallbacks (Worker secrets take precedence).
+Build from a machine whose `.env.local` holds nothing you would not upload to Cloudflare.
+
+Time limits: Workers HTTP requests have no wall-clock limit while the client stays
+connected (CPU time is what is metered), and work handed to `after()` runs through the
+Worker's `waitUntil`, which gets about 30 s after the response is sent. The server code
+keeps its existing budgets: the Quick CMA stops its RealtyAPI search after 20 s (6 s per
+request) and answers `error`, recording the credits spent; the post-call route's Jev check
+(8 s) runs before it responds, and its one Claude summary attempt (15 s, no retry) runs in
+`after()`, inside the `waitUntil` window; the CMA note draft is one 20 s attempt. To change
+them, edit `SEARCH_BUDGET_MS` in `app/api/cma/route.ts` and `SUMMARY_TIMEOUT_MS` in
+`app/api/calls/[id]/finish/route.ts`.
 
 ## DNC review
 

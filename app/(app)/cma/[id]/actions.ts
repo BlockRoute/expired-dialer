@@ -124,7 +124,7 @@ export async function draftNotes(id: string, excluded: unknown): Promise<EditRes
       // Sonnet 5.5 cannot disable thinking; low effort keeps it short, and the budget leaves room for the JSON.
       effort: 'low',
       maxTokens: 4_000,
-      requestOptions: { timeout: DRAFT_TIMEOUT_MS, maxRetries: 0 }, // one attempt fits a 26 s Netlify function
+      requestOptions: { timeout: DRAFT_TIMEOUT_MS, maxRetries: 0 }, // one bounded attempt (see README timing)
     });
     const text = usableText(message);
     const draft = text ? parseDraft(text) : null;
