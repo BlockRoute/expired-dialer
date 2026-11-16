@@ -17,8 +17,9 @@ const MODEL = 'claude-sonnet-5-5';
 const DRAFT_TIMEOUT_MS = 20_000;
 const SLUG_ATTEMPTS = 5;
 
+const excludedSchema = z.array(z.string()).max(50);
 const editSchema = z.object({
-  excluded: z.array(z.string()).max(50),
+  excluded: excludedSchema,
   low: z.number().int().positive(),
   high: z.number().int().positive(),
   favor: z.string().max(600),
@@ -95,26 +96,27 @@ export async function publishCma(id: string, raw: unknown): Promise<EditResult<{
 }
 
 /** Drafts the two seller notes from the included comps. Output is held to the copy rules before it reaches the editor. */
-export async function draftNotes(id: string, excluded: string[]): Promise<EditResult<{ favor: string; weigh: string }>> {
+export async function draftNotes(id: string, excluded: unknown): Promise<EditResult<{ favor: string; weigh: string }>> {
   await requireUser();
+  const ex = excludedSchema.safeParse(excluded);
+  if (!ex.success) return { ok: false, error: 'Check the selected comps.' };
   if (!aiEnabled()) return { ok: false, error: 'AI drafting is not set up.' };
-  const { cma } = await loadOwned(id);
-  if (!cma?.price_range) return { ok: false, error: 'CMA not found.' };
-
-  const subject = cma.subject as Partial<Subject>;
-  const comps = includedComps(withExcluded(cma.comps as StoredComp[], excluded)).map((c) => ({
-    address: c.address, soldPrice: c.soldPrice, soldDate: c.soldDate, dom: c.dom, beds: c.beds, baths: c.baths,
-    sqft: c.sqft, yearBuilt: c.yearBuilt, lotSqft: c.lotSqft, pricePerSqft: Math.round(c.ppsf), distanceMiles: Number(c.distanceMiles.toFixed(2)),
-  }));
-  const userMessage = JSON.stringify({
-    subject: {
-      address: streetOf(cma.address), beds: subject.beds, baths: subject.baths, sqft: subject.sqft,
-      yearBuilt: subject.yearBuilt, lotSqft: subject.lotSqft,
-    },
-    closedSales: comps,
-  });
-
   try {
+    const { cma } = await loadOwned(id);
+    if (!cma?.price_range) return { ok: false, error: 'CMA not found.' };
+    const subject = cma.subject as Partial<Subject>;
+    const comps = includedComps(withExcluded(cma.comps as StoredComp[], ex.data)).map((c) => ({
+      address: c.address, soldPrice: c.soldPrice, soldDate: c.soldDate, dom: c.dom, beds: c.beds, baths: c.baths,
+      sqft: c.sqft, yearBuilt: c.yearBuilt, lotSqft: c.lotSqft, pricePerSqft: Math.round(c.ppsf), distanceMiles: Number(c.distanceMiles.toFixed(2)),
+    }));
+    const userMessage = JSON.stringify({
+      subject: {
+        address: streetOf(cma.address), beds: subject.beds, baths: subject.baths, sqft: subject.sqft,
+        yearBuilt: subject.yearBuilt, lotSqft: subject.lotSqft,
+      },
+      closedSales: comps,
+    });
+
     const message = await runClaude({
       model: MODEL,
       system: DRAFT_SYSTEM_PROMPT,

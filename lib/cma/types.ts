@@ -49,3 +49,20 @@ export type Comp = {
   distanceMiles: number;
   zillowUrl: string;
 };
+
+/** One Zillow for-sale search hit, allowlisted. No value estimates. */
+export type RawActive = {
+  zpid: string;
+  address: string;
+  lat: number;
+  lng: number;
+  listPrice: number;
+  beds: number | null;
+  baths: number | null;
+  sqft: number | null;
+  /** Days on Zillow for an active listing. */
+  dom: number | null;
+};
+
+/** Active competition shown on the seller page. Never enters indicatedValue. */
+export type Active = RawActive & { distanceMiles: number; zillowUrl: string };

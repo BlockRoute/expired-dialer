@@ -1,5 +1,5 @@
-import type { Comp, RawComp, Subject, Window } from './types';
-import { WINDOWS, zillowSold } from './zillow';
+import type { Active, Comp, RawComp, Subject, Window } from './types';
+import { WINDOWS, zillowActive, zillowSold } from './zillow';
 
 const EARTH_MILES = 3958.8;
 const DAY = 86_400_000;
@@ -93,4 +93,23 @@ export async function searchComps(subject: Subject): Promise<{ comps: Comp[]; wi
     if (comps.length >= ENOUGH) break;
   }
   return { comps, window, requests };
+}
+
+const MAX_ACTIVES = 10;
+
+/** One extra request at the chosen window's radius. Any failure yields [] so it never fails the CMA. Excludes the subject itself. */
+export async function searchActives(subject: Subject, window: Window): Promise<Active[]> {
+  try {
+    return (await zillowActive(subject, window))
+      .filter((a) => a.zpid !== subject.zpid)
+      .map((a) => ({
+        ...a,
+        distanceMiles: haversineMiles(subject.lat, subject.lng, a.lat, a.lng),
+        zillowUrl: `https://www.zillow.com/homedetails/${a.zpid}_zpid/`,
+      }))
+      .sort((a, b) => a.distanceMiles - b.distanceMiles)
+      .slice(0, MAX_ACTIVES);
+  } catch {
+    return [];
+  }
 }

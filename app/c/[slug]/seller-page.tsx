@@ -1,5 +1,5 @@
 import { closestMatch, dateLabel, money, moneyK, streetOf, WINDOW_LABEL, type PublishedCma } from '@/lib/cma/seller';
-import { CompExplorer, type MapComp } from './map';
+import { CompExplorer, type MapActive, type MapComp } from './map';
 import { SELLER_CSS } from './seller-css';
 
 const FOOTER_CREDENTIAL = 'eXp Realty · Seller Representative Specialist (SRS) · danielyoonrealty.com';
@@ -15,6 +15,7 @@ export function SellerPage({ cma, fontClassName }: { cma: PublishedCma; fontClas
   const comps: MapComp[] = [...cma.comps]
     .sort((a, b) => b.soldDate.localeCompare(a.soldDate))
     .map((c, i) => ({ ...c, id: String(i + 1) }));
+  const actives: MapActive[] = cma.actives.map((a, i) => ({ ...a, id: String.fromCharCode(65 + (i % 26)) }));
   const window = cma.time_window ? WINDOW_LABEL[cma.time_window] ?? cma.time_window : null;
   const far = comps.reduce((m, c) => Math.max(m, c.distanceMiles), 0);
   const heading = `Closed sales${window ? ` · ${window}` : ''}`;
@@ -45,7 +46,7 @@ export function SellerPage({ cma, fontClassName }: { cma: PublishedCma; fontClas
         </ul>
 
         <div className="sect list-head">{heading}</div>
-        <CompExplorer subject={{ lat: s.lat, lng: s.lng }} comps={comps} subjectLabel={street} />
+        <CompExplorer subject={{ lat: s.lat, lng: s.lng }} comps={comps} actives={actives} subjectLabel={street} />
 
         <section className="value">
           <div className="sect">What the sales indicate</div>

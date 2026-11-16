@@ -4,7 +4,7 @@ import { requireUserApi } from '@/lib/auth';
 import { normalizeAddress } from '@/lib/address';
 import { withApiErrors } from '@/lib/server/api-errors';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { searchComps } from '@/lib/cma/select';
+import { searchActives, searchComps } from '@/lib/cma/select';
 import { indicatedValue } from '@/lib/cma/value';
 import { zillowByAddress } from '@/lib/cma/zillow';
 import type { LeadRow } from '@/lib/db/types';
@@ -82,6 +82,9 @@ export const GET = withApiErrors(async (request) => {
   }
 
   const { subject, comps, window, value } = computed;
+  // One extra request for active competition; a failure stores [] and the CMA still goes through.
+  credits += 1;
+  const actives = await searchActives(subject, window);
   const insert = await supabase
     .from('cmas')
     .insert({
@@ -90,6 +93,7 @@ export const GET = withApiErrors(async (request) => {
       normalized_address: normalized,
       subject,
       comps,
+      actives,
       // low/high are what the live coach reads; point and medianPpsf ride along in the same jsonb.
       price_range: { low: value.low, high: value.high, point: value.point, medianPpsf: value.medianPpsf },
       time_window: window.soldInLast,

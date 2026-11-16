@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SellerPage } from '@/app/c/[slug]/seller-page';
-import { sellerMetadata, ringsFor, closestMatch, streetOf } from './seller';
+import { notFoundMetadata, sellerMetadata, ringsFor, closestMatch, streetOf } from './seller';
 import { PUBLISHED } from './fixtures/published';
 
 const html = () => renderToStaticMarkup(createElement(SellerPage, { cma: PUBLISHED, fontClassName: 'f' }));
@@ -34,6 +34,16 @@ describe('SellerPage', () => {
     expect(h).toContain('Days on market runs from the first Zillow listing date to closing');
   });
 
+  it('shows the active toggle and active rows when actives exist, and omits them otherwise', () => {
+    const h = html();
+    expect(h).toContain('Active competition');
+    expect(h).toContain('type="checkbox"');
+    expect(h).toContain('4425 Grove Ave');
+    const none = renderToStaticMarkup(createElement(SellerPage, { cma: { ...PUBLISHED, actives: [] }, fontClassName: 'f' }));
+    expect(none).not.toContain('Active competition');
+    expect(none).not.toContain('type="checkbox"');
+  });
+
   it('omits an empty note section', () => {
     const h = renderToStaticMarkup(createElement(SellerPage, { cma: { ...PUBLISHED, favor_note: null }, fontClassName: 'f' }));
     expect(h).not.toContain('Works in your favor');
@@ -46,6 +56,20 @@ describe('sellerMetadata', () => {
     const m = sellerMetadata(PUBLISHED.address);
     expect(m.title).toBe('4417 Grove Ave Comps');
     expect(m.robots).toBe('noindex');
+  });
+  it('sets a neutral description and openGraph so the app text is not inherited', () => {
+    const m = sellerMetadata(PUBLISHED.address);
+    expect(m.description).toBe('Recent closed sales near 4417 Grove Ave');
+    expect(m.openGraph).toMatchObject({ title: '4417 Grove Ave Comps', description: 'Recent closed sales near 4417 Grove Ave' });
+    expect(JSON.stringify(m)).not.toMatch(/cold-calling|dialer|workspace/i);
+    expect(JSON.stringify(m)).not.toMatch(/—|!/);
+  });
+  it('not-found metadata is neutral and noindex too', () => {
+    const m = notFoundMetadata();
+    expect(m.robots).toBe('noindex');
+    expect(JSON.stringify(m)).not.toMatch(/cold-calling|workspace/i);
+    expect(m.description).toBeTruthy();
+    expect(m.openGraph).toBeTruthy();
   });
 });
 

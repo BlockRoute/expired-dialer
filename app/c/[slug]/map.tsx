@@ -2,11 +2,12 @@
 
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useRef, useState } from 'react';
-import type { Map as LMap, Marker } from 'leaflet';
-import type { Comp } from '@/lib/cma/types';
+import type { LayerGroup, Map as LMap, Marker } from 'leaflet';
+import type { Active, Comp } from '@/lib/cma/types';
 import { dateLabel, money, moneyK, ringsFor } from '@/lib/cma/seller';
 
 export type MapComp = Comp & { id: string };
+export type MapActive = Active & { id: string };
 type Pt = { lat: number; lng: number };
 
 const CARTO = 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_41vq_1_33a632382dbe542ebbe73d37';
@@ -26,7 +27,18 @@ function popupHtml(c: MapComp) {
     + `<a href="${esc(c.zillowUrl)}" target="_blank" rel="noreferrer noopener">View on Zillow</a></div>`;
 }
 
-export function CompExplorer({ subject, comps, subjectLabel }: { subject: Pt; comps: MapComp[]; subjectLabel: string }) {
+function activePopupHtml(a: MapActive) {
+  return `<div class="pop"><div class="pop-price">${money(a.listPrice)} asking</div>`
+    + `<div class="pop-sub">${a.dom == null ? 'days on market n/a' : `${a.dom} days on market`}</div>`
+    + `<div class="pop-addr">${esc(a.address)}</div>`
+    + `<div class="pop-facts">${num(a.beds)} bd · ${num(a.baths)} ba · ${a.sqft ? a.sqft.toLocaleString('en-US') : 'n/a'} sq ft</div>`
+    + `<a href="${esc(a.zillowUrl)}" target="_blank" rel="noreferrer noopener">View on Zillow</a></div>`;
+}
+
+export function CompExplorer({ subject, comps, actives, subjectLabel }: { subject: Pt; comps: MapComp[]; actives: MapActive[]; subjectLabel: string }) {
+  const [showActives, setShowActives] = useState(true);
+  const activeLayer = useRef<LayerGroup | null>(null);
+  const showRef = useRef(true);
   const [selected, setSelected] = useState<string>(comps[0]?.id ?? '');
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<LMap | null>(null);
@@ -65,6 +77,21 @@ export function CompExplorer({ subject, comps, subjectLabel }: { subject: Pt; co
         mk.on('click', () => select.current(c.id));
         markers.current[c.id] = mk;
       }
+      const layer = L.layerGroup();
+      for (const a of actives) {
+        bounds.extend([a.lat, a.lng]);
+        far = Math.max(far, a.distanceMiles);
+        const mk = L.marker([a.lat, a.lng], {
+          icon: L.divIcon({ className: '', html: `<div class="pin pin-active">${esc(a.id)}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }),
+        });
+        mk.bindTooltip(moneyK(a.listPrice), { permanent: true, direction: 'right', offset: [12, 0], className: 'ptip' });
+        mk.bindPopup(activePopupHtml(a));
+        mk.on('click', () => select.current(a.id));
+        markers.current[a.id] = mk;
+        layer.addLayer(mk);
+      }
+      activeLayer.current = layer;
+      if (showRef.current) layer.addTo(m);
       for (const miles of ringsFor(far)) {
         L.circle([subject.lat, subject.lng], { radius: miles * MILE_M, color: '#9aa8ba', weight: 1.5, dashArray: '6 6', fill: false, interactive: false }).addTo(m);
       }
@@ -75,8 +102,16 @@ export function CompExplorer({ subject, comps, subjectLabel }: { subject: Pt; co
       map.current?.remove();
       map.current = null;
       markers.current = {};
+      activeLayer.current = null;
     };
-  }, [subject.lat, subject.lng, comps, subjectLabel]);
+  }, [subject.lat, subject.lng, comps, actives, subjectLabel]);
+
+  useEffect(() => {
+    const m = map.current;
+    const layer = activeLayer.current;
+    if (!m || !layer) return;
+    if (showActives) layer.addTo(m); else layer.remove();
+  }, [showActives]);
 
   useEffect(() => {
     const mk = markers.current[selected];
@@ -84,6 +119,7 @@ export function CompExplorer({ subject, comps, subjectLabel }: { subject: Pt; co
   }, [selected]);
 
   const sel = comps.find((c) => c.id === selected) ?? null;
+  const selActive = actives.find((a) => a.id === selected) ?? null;
 
   return (
     <section className="explorer">
@@ -109,6 +145,19 @@ export function CompExplorer({ subject, comps, subjectLabel }: { subject: Pt; co
               </dl>
               <a href={sel.zillowUrl} target="_blank" rel="noreferrer noopener">View on Zillow</a>
             </>
+          ) : selActive ? (
+            <>
+              <div className="sect">Active {selActive.id}</div>
+              <div className="d-addr">{selActive.address}</div>
+              <div className="d-price">{money(selActive.listPrice)}</div>
+              <dl className="grid">
+                <div><dt>Days on market</dt><dd>{selActive.dom == null ? 'n/a' : selActive.dom}</dd></div>
+                <div><dt>Beds / baths</dt><dd>{num(selActive.beds)} / {num(selActive.baths)}</dd></div>
+                <div><dt>Sq ft</dt><dd>{selActive.sqft ? selActive.sqft.toLocaleString('en-US') : 'n/a'}</dd></div>
+                <div><dt>Distance</dt><dd>{selActive.distanceMiles.toFixed(2)} mi</dd></div>
+              </dl>
+              <a href={selActive.zillowUrl} target="_blank" rel="noreferrer noopener">View on Zillow</a>
+            </>
           ) : (
             <div className="muted">Select a sale for its details.</div>
           )}
@@ -127,6 +176,30 @@ export function CompExplorer({ subject, comps, subjectLabel }: { subject: Pt; co
             </li>
           ))}
         </ol>
+        {actives.length > 0 && (
+          <>
+            <div className="sect active-head">
+              Active competition
+              <label className="toggle">
+                <input type="checkbox" checked={showActives} onChange={(e) => { showRef.current = e.target.checked; setShowActives(e.target.checked); }} /> Show on map
+              </label>
+            </div>
+            <ol className="list">
+              {actives.map((a) => (
+                <li key={a.id}>
+                  <button type="button" className={a.id === selected ? 'row on' : 'row'} onClick={() => setSelected(a.id)}>
+                    <span className="pin pin-active sm">{a.id}</span>
+                    <span className="r-main">
+                      <span className="r-addr">{a.address.split(',')[0]}</span>
+                      <span className="r-sub">{a.dom == null ? 'days on market n/a' : `${a.dom} days on market`} · {a.sqft ? `${a.sqft.toLocaleString('en-US')} sq ft` : 'sq ft n/a'}</span>
+                    </span>
+                    <span className="r-price">{money(a.listPrice)}</span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
       </div>
     </section>
   );

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { credibleComps, haversineMiles, domDays, searchComps } from './select';
+import { credibleComps, haversineMiles, domDays, searchComps, searchActives } from './select';
 import type { RawComp, Subject } from './types';
-import { SUBJECT, soldSearch } from './fixtures/zillow';
+import { SUBJECT, soldSearch, forSaleSearch } from './fixtures/zillow';
 
 const subject: Subject = { ...SUBJECT, taxAssessed: 297000 };
 const raw = (o: Partial<RawComp>): RawComp => ({
@@ -105,5 +105,24 @@ describe('searchComps window search', () => {
     expect(out.window).toEqual({ soldInLast: '6_months', radius: 2 });
     expect(out.comps.map((c) => c.zpid)).toEqual(['101', '102', '103', '201', '202']);
     expect(out.requests).toBe(4);
+  });
+});
+
+describe('searchActives', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const win = { soldInLast: '90_days', radius: 1 };
+  it('keeps the 10 nearest, nearest first, with distance and a Zillow link', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(forSaleSearch(12)), { status: 200 })));
+    process.env.REALTYAPI_KEY = 'test-key';
+    const out = await searchActives(subject, win);
+    expect(out).toHaveLength(10);
+    expect(out[0].distanceMiles).toBeLessThanOrEqual(out[9].distanceMiles);
+    expect(out[0].zillowUrl).toBe(`https://www.zillow.com/homedetails/${out[0].zpid}_zpid/`);
+    expect(JSON.stringify(out).toLowerCase()).not.toContain('zestimate');
+  });
+  it('returns [] when the request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    process.env.REALTYAPI_KEY = 'test-key';
+    expect(await searchActives(subject, win)).toEqual([]);
   });
 });

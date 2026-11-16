@@ -21,7 +21,7 @@ function table(name: string) {
 vi.mock('@/lib/supabase/server', () => ({ createSupabaseServerClient: async () => ({ from: table }) }));
 
 import { GET } from './route';
-import { byAddressResponse, soldSearch } from '@/lib/cma/fixtures/zillow';
+import { byAddressResponse, forSaleSearch, soldSearch } from '@/lib/cma/fixtures/zillow';
 
 const lead = {
   id: LEAD_ID, property_address: '2812 Amherst Ridge Dr', property_city: 'Richmond', property_state: 'VA',
@@ -87,11 +87,29 @@ describe('GET /api/cma', () => {
     expect(state.inserted).toHaveLength(0);
   });
 
-  it('computes and stores a CMA with credits = every request made', async () => {
+  const search = (url: string) => {
+    const q = new URL(url).searchParams;
+    return q.get('listingStatus') === 'For_Sale' ? forSaleSearch(3) : soldSearch(5);
+  };
+
+  it('computes and stores a CMA with credits = every request made, actives included', async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      new Response(JSON.stringify(url.includes('/pro/byaddress') ? byAddressResponse() : soldSearch(5)), { status: 200 }));
+      new Response(JSON.stringify(url.includes('/pro/byaddress') ? byAddressResponse() : search(url)), { status: 200 }));
     const body = await (await call()).json();
-    expect(body.cma.credits_used).toBe(2);
+    expect(body.cma.credits_used).toBe(3); // by-address + one sold window + actives
     expect(state.inserted[0].price_range).toMatchObject({ low: expect.any(Number), high: expect.any(Number) });
+    expect(state.inserted[0].actives).toHaveLength(3);
+  });
+
+  it('an actives failure does not fail the CMA: stored with actives []', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/pro/byaddress')) return new Response(JSON.stringify(byAddressResponse()), { status: 200 });
+      if (new URL(url).searchParams.get('listingStatus') === 'For_Sale') return new Response('{}', { status: 500 });
+      return new Response(JSON.stringify(soldSearch(5)), { status: 200 });
+    });
+    const body = await (await call()).json();
+    expect(body.cma).toBeTruthy();
+    expect(state.inserted[0].actives).toEqual([]);
+    expect(state.inserted[0].price_range).toBeTruthy();
   });
 });

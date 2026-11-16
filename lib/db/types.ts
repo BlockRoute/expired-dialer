@@ -155,6 +155,7 @@ export type CmaRow = {
   address: string;
   subject: Record<string, unknown>;
   comps: unknown[];
+  actives: unknown[];
   price_range: Record<string, unknown> | null;
   time_window: string | null;
   radius_miles: number | null;

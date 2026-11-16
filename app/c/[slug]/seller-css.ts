@@ -34,11 +34,16 @@ export const SELLER_CSS = `
 .seller .pin{display:flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700;font-size:13px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .seller .pin-sold{width:28px;height:28px;background:var(--accent)}
 .seller .pin-sold.sm{width:24px;height:24px;flex:none;box-shadow:none}
+.seller .pin-active{width:26px;height:26px;background:var(--active);border-radius:7px}
+.seller .pin-active.sm{width:24px;height:24px;flex:none;box-shadow:none}
+.seller .active-head{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+.seller .toggle{text-transform:none;letter-spacing:0;font-weight:600;color:var(--ink);font-size:13px;display:flex;gap:6px;align-items:center}
 .seller .pin-subject{width:40px;height:40px;background:#14181c;font-size:20px;border-radius:12px}
 .seller .ptip{background:var(--surface);color:var(--ink);border:1px solid var(--line);font-weight:700;font-size:12px;box-shadow:none;padding:1px 6px}
 .seller .ptip::before{display:none}
 .seller .leaflet-control-attribution{font-size:10px;opacity:.65}
 .seller .leaflet-popup-content{margin:12px 14px}
+.seller .leaflet-popup-content a{color:#2f4a6d}
 .seller .pop-price{font-size:18px;font-weight:700}
 .seller .pop-sub,.seller .pop-facts{color:#5f6772;font-size:12px}
 .seller .pop-addr{font-weight:600;margin:4px 0 2px}

@@ -1,7 +1,7 @@
 // Server-only: reads REALTYAPI_KEY. Fail loudly if bundled into a browser.
 if (typeof window !== 'undefined') throw new Error('lib/cma/zillow is server-only');
 
-import type { RawComp, Subject, Window } from './types';
+import type { RawActive, RawComp, Subject, Window } from './types';
 
 const BASE = 'https://zillow.realtyapi.io';
 
@@ -113,6 +113,39 @@ export async function zillowSold(subject: Subject, window: Window): Promise<RawC
       sqft: num(r, 'livingArea', 'area') ?? num(home, 'livingArea'),
       yearBuilt: num(r, 'yearBuilt') ?? num(home, 'yearBuilt'),
       lotSqft: num(r, 'lotSize', 'lotAreaValue') ?? num(home, 'lotAreaValue'),
+    });
+  }
+  return out;
+}
+
+/** For-sale houses near the subject, same radius and sqft band as the sold window. Allowlist only. */
+export async function zillowActive(subject: Subject, window: Window): Promise<RawActive[]> {
+  const params: Record<string, string> = {
+    latitude: String(subject.lat),
+    longitude: String(subject.lng),
+    radius: String(window.radius),
+    listingStatus: 'For_Sale',
+    homeType: 'Houses',
+  };
+  if (subject.sqft) params.squareFeetRange = `min:${Math.floor(subject.sqft * 0.8)}, max:${Math.ceil(subject.sqft * 1.25)}`;
+  const out: RawActive[] = [];
+  for (const r of resultList(await get('/search/bycoordinates', params))) {
+    const home = (r.hdpData as Json | undefined)?.homeInfo as Json | undefined;
+    const zpid = num(r, 'zpid');
+    const lat = num(r, 'latitude') ?? num(r.latLong as Json | undefined, 'latitude') ?? num(home, 'latitude');
+    const lng = num(r, 'longitude') ?? num(r.latLong as Json | undefined, 'longitude') ?? num(home, 'longitude');
+    const listPrice = num(r, 'unformattedPrice', 'price');
+    if (zpid == null || lat == null || lng == null || listPrice == null || listPrice <= 0) continue;
+    out.push({
+      zpid: String(zpid),
+      address: typeof r.address === 'string' ? r.address : String(r.addressStreet ?? ''),
+      lat,
+      lng,
+      listPrice,
+      beds: num(r, 'bedrooms', 'beds'),
+      baths: num(r, 'bathrooms', 'baths'),
+      sqft: num(r, 'livingArea', 'area') ?? num(home, 'livingArea'),
+      dom: num(r, 'daysOnZillow'),
     });
   }
   return out;

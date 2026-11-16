@@ -4,7 +4,8 @@
 
 alter table public.cmas
   add column favor_note text,   -- "Works in your favor", shown on the seller page
-  add column weigh_note text;   -- "Buyers will weigh", shown on the seller page
+  add column weigh_note text,   -- "Buyers will weigh", shown on the seller page
+  add column actives jsonb not null default '[]'::jsonb;  -- active competition; never part of the value math
 
 drop policy cmas_public_read on public.cmas;
 
@@ -13,6 +14,7 @@ returns table (
   address text,
   subject jsonb,
   comps jsonb,
+  actives jsonb,
   price_range jsonb,
   time_window text,
   radius_miles numeric,
@@ -41,6 +43,16 @@ as $$
       (select pg_catalog.jsonb_agg(e.value order by e.ord)
          from pg_catalog.jsonb_array_elements(c.comps) with ordinality as e(value, ord)
         where coalesce((e.value ->> 'excluded')::boolean, false) = false),
+      '[]'::jsonb
+    ),
+    coalesce(
+      (select pg_catalog.jsonb_agg(
+         jsonb_build_object(
+           'zpid', e.value -> 'zpid', 'address', e.value -> 'address', 'lat', e.value -> 'lat', 'lng', e.value -> 'lng',
+           'listPrice', e.value -> 'listPrice', 'beds', e.value -> 'beds', 'baths', e.value -> 'baths',
+           'sqft', e.value -> 'sqft', 'dom', e.value -> 'dom', 'distanceMiles', e.value -> 'distanceMiles',
+           'zillowUrl', e.value -> 'zillowUrl') order by e.ord)
+         from pg_catalog.jsonb_array_elements(c.actives) with ordinality as e(value, ord)),
       '[]'::jsonb
     ),
     c.price_range,

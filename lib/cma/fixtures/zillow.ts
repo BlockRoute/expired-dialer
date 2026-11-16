@@ -66,3 +66,21 @@ export function soldSearch(n: number) {
   });
   return { results };
 }
+
+/** Raw `GET /search/bycoordinates` (For_Sale) body: `n` active homes, farthest first, with vendor value-estimate fields to prove the allowlist drops them. */
+export function forSaleSearch(n: number) {
+  const results = Array.from({ length: n }, (_, i) => ({
+    zpid: String(7000 + i),
+    address: `${3000 + i} ${STREETS[i % STREETS.length]}, Richmond, VA 23235`,
+    latitude: SUBJECT.lat + 0.002 * (n - i),
+    longitude: SUBJECT.lng - 0.003,
+    price: 450000 + i * 5000,
+    daysOnZillow: 5 + i,
+    bedrooms: 4,
+    bathrooms: 2.5,
+    livingArea: 2000 + i * 10,
+    zestimate: 470000,
+    rentZestimate: 2900,
+  }));
+  return { results };
+}

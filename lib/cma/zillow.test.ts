@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { zillowByAddress, zillowSold } from './zillow';
-import { SUBJECT, byAddressResponse, soldSearch } from './fixtures/zillow';
+import { zillowActive, zillowByAddress, zillowSold } from './zillow';
+import { SUBJECT, byAddressResponse, forSaleSearch, soldSearch } from './fixtures/zillow';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -72,5 +72,24 @@ describe('zillowSold', () => {
     const comps = await zillowSold(SUBJECT, { soldInLast: '90_days', radius: 1 });
     expect(comps.map((c) => c.soldDate)).toEqual([sold, sold, sold]);
     expect(comps.map((c) => c.listingDate)).toEqual([listed, listed, listed]);
+  });
+});
+
+describe('zillowActive', () => {
+  it('uses For_Sale, Houses and the window radius; keeps allowlisted fields, no Zestimate', async () => {
+    const f = stub(forSaleSearch(3));
+    const out = await zillowActive(SUBJECT, { soldInLast: '90_days', radius: 1 });
+    expect(out).toHaveLength(3);
+    expect(out[0]).toEqual({
+      zpid: '7000', address: expect.any(String), lat: expect.any(Number), lng: expect.any(Number),
+      listPrice: 450000, beds: 4, baths: 2.5, sqft: 2000, dom: 5,
+    });
+    expect(JSON.stringify(out).toLowerCase()).not.toContain('zestimate');
+    const u = new URL((f.mock.calls[0] as unknown as [string])[0]);
+    expect(u.searchParams.get('listingStatus')).toBe('For_Sale');
+    expect(u.searchParams.get('homeType')).toBe('Houses');
+    expect(u.searchParams.get('radius')).toBe('1');
+    expect(u.searchParams.get('soldInLast')).toBeNull();
+    expect(u.searchParams.get('squareFeetRange')).toBe(`min:${Math.floor(SUBJECT.sqft! * 0.8)}, max:${Math.ceil(SUBJECT.sqft! * 1.25)}`);
   });
 });

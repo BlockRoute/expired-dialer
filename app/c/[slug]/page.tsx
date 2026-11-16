@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { Manrope } from 'next/font/google';
 import { createClient } from '@supabase/supabase-js';
 import { publicSupabaseConfig } from '@/lib/supabase/config';
-import { sellerMetadata, type PublishedCma } from '@/lib/cma/seller';
+import { notFoundMetadata, sellerMetadata, type PublishedCma } from '@/lib/cma/seller';
 import { SellerPage } from './seller-page';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +27,7 @@ const load = cache(async (slug: string): Promise<PublishedCma | null> => {
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const cma = await load((await params).slug);
-  return cma ? sellerMetadata(cma.address) : { title: 'Not found', robots: 'noindex' };
+  return cma ? sellerMetadata(cma.address) : notFoundMetadata();
 }
 
 export default async function Page({ params }: { params: Promise<{ slug: string }> }) {

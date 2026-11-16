@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import type { Comp } from './types';
+import type { Active, Comp } from './types';
 
 /** What `get_published_cma` returns: page fields only, excluded comps already removed. */
 export type PublishedCma = {
@@ -9,6 +9,7 @@ export type PublishedCma = {
     sqft: number | null; yearBuilt: number | null; lotSqft: number | null; taxAssessed: number | null;
   };
   comps: Comp[];
+  actives: Active[];
   price_range: { low: number; high: number; point?: number; medianPpsf: number };
   time_window: string | null;
   radius_miles: number | null;
@@ -19,8 +20,18 @@ export type PublishedCma = {
 
 export const streetOf = (address: string) => address.split(',')[0].trim();
 
+/** Neutral, seller-facing metadata. Sets description and openGraph so the app's root text is never inherited. */
 export function sellerMetadata(address: string): Metadata {
-  return { title: `${streetOf(address)} Comps`, robots: 'noindex' };
+  const street = streetOf(address);
+  const title = `${street} Comps`;
+  const description = `Recent closed sales near ${street}`;
+  return { title, description, robots: 'noindex', openGraph: { title, description } };
+}
+
+export function notFoundMetadata(): Metadata {
+  const title = 'Page not found';
+  const description = 'This comparable sales page is not available.';
+  return { title, description, robots: 'noindex', openGraph: { title, description } };
 }
 
 /** Dashed ring radii (miles) sized to the comp spread, per the comp-map skill. */
