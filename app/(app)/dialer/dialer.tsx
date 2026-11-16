@@ -27,6 +27,17 @@ import { useTranscription } from './use-transcription';
 
 type DeviceStatus = 'loading' | 'ready' | 'error';
 
+/** Twilio SDK errors carry a numeric code (e.g. 20101 invalid token, 31208 mic denied); show it. */
+function describeError(error: unknown): string {
+  console.error('[dialer]', error);
+  if (error && typeof error === 'object') {
+    const e = error as { code?: unknown; name?: unknown; message?: unknown };
+    const parts = [e.code, e.name, e.message].filter((p) => typeof p === 'string' || typeof p === 'number');
+    if (parts.length) return parts.join(' ');
+  }
+  return typeof error === 'string' && error ? error : 'unknown error';
+}
+
 const BLOCK_TEXT: Record<BlockReason, string> = {
   vendor_dnc: 'Vendor flagged do-not-call',
   internal_dnc: 'On your internal DNC list',
@@ -171,7 +182,7 @@ export function Dialer(props: {
         const [Ctor, token] = await Promise.all([loadDeviceCtor(), fetchToken()]);
         if (cancelled) return;
         device = new Ctor(token);
-        device.on('error', (error: { message?: string }) => setMessage(`Phone error: ${error.message ?? 'unknown'}`));
+        device.on('error', (error: unknown) => setMessage(`Phone error: ${describeError(error)}`));
         device.on('tokenWillExpire', async () => {
           try {
             device?.updateToken(await fetchToken());
@@ -259,12 +270,12 @@ export function Dialer(props: {
       call.on('disconnect', ended);
       call.on('cancel', ended);
       call.on('reject', ended);
-      call.on('error', (error: { message?: string }) => {
-        setMessage(`Call error: ${error.message ?? 'unknown'}`);
+      call.on('error', (error: unknown) => {
+        setMessage(`Call error: ${describeError(error)}`);
         ended();
       });
     } catch (error) {
-      setMessage(`Could not place the call: ${error instanceof Error ? error.message : 'unknown error'}`);
+      setMessage(`Could not place the call: ${describeError(error)}`);
       dispatch({ type: 'disconnected' });
     }
   }, [flow, lead, phone]);
