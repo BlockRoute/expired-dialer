@@ -16,7 +16,7 @@ const xml = (body: string, status = 200) =>
  */
 export async function POST(request: Request) {
   const params = await readTwilioParams(request);
-  if (!verifyTwilioRequest(request, params)) return xml('<Response/>', 403);
+  if (!(await verifyTwilioRequest(request, params))) return xml('<Response/>', 403);
 
   const url = new URL(request.url);
   const callId = url.searchParams.get('callId');

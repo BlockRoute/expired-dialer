@@ -3,7 +3,7 @@ import { requireUserApi } from '@/lib/auth';
 import type { CallRow, SettingsRow } from '@/lib/db/types';
 import { withApiErrors } from '@/lib/server/api-errors';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { twilioRestClient } from '@/lib/twilio/client';
+import { updateTwilioCall } from '@/lib/twilio/client';
 import { playTwiml } from '@/lib/twilio/twiml';
 
 export const dynamic = 'force-dynamic';
@@ -44,8 +44,7 @@ export const POST = withApiErrors(async (request) => {
     .createSignedUrl(drop.path, SIGNED_URL_TTL_S);
   if (signError || !signed) throw new Error('Voicemail drop URL could not be signed');
 
-  const twilio = twilioRestClient();
-  await twilio.calls(call.twilio_child_sid).update({ twiml: playTwiml(signed.signedUrl) });
+  await updateTwilioCall(call.twilio_child_sid, { Twiml: playTwiml(signed.signedUrl) });
   // The child redirect is the commit point: the lead now hears the voicemail.
   const { error: updateError } = await db
     .from('calls')
@@ -57,7 +56,7 @@ export const POST = withApiErrors(async (request) => {
 
   // Best-effort: the Dial action usually hangs the parent up first, so this may be rejected.
   try {
-    await twilio.calls(call.twilio_parent_sid).update({ status: 'completed' });
+    await updateTwilioCall(call.twilio_parent_sid, { Status: 'completed' });
   } catch (error) {
     console.error('vm-drop parent hangup failed', error instanceof Error ? error.message : 'unknown');
   }

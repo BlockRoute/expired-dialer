@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const params: Record<string, string> = {};
   for (const [key, value] of form.entries()) if (typeof value === 'string') params[key] = value;
 
-  if (!verifyTwilioRequest(request, params)) {
+  if (!(await verifyTwilioRequest(request, params))) {
     return xml('<Response/>', 403);
   }
 

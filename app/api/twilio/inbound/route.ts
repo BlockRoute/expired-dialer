@@ -12,7 +12,7 @@ const xml = (body: string, status = 200) =>
 /** Calls to the Twilio number are forwarded to Daniel's cell; logging is best-effort. */
 export async function POST(request: Request) {
   const params = await readTwilioParams(request);
-  if (!verifyTwilioRequest(request, params)) return xml('<Response/>', 403);
+  if (!(await verifyTwilioRequest(request, params))) return xml('<Response/>', 403);
 
   const cell = process.env.DANIEL_CELL;
   if (!cell) return xml(messageTwiml('This line is not configured to take calls.'));

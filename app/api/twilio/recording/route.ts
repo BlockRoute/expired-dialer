@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 /** Twilio recordingStatusCallback: copies the finished mp3 into private storage. */
 export async function POST(request: Request) {
   const params = await readTwilioParams(request);
-  if (!verifyTwilioRequest(request, params)) return new Response(null, { status: 403 });
+  if (!(await verifyTwilioRequest(request, params))) return new Response(null, { status: 403 });
 
   const callId = new URL(request.url).searchParams.get('callId');
   if (!callId || params.RecordingStatus !== 'completed' || !params.RecordingUrl) {

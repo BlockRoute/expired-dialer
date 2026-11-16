@@ -5,7 +5,7 @@ let db: ReturnType<typeof fakeDb>;
 const update = vi.fn();
 vi.mock('@/lib/auth', () => ({ requireUserApi: vi.fn(async () => ({ id: 'u1' })) }));
 vi.mock('@/lib/supabase/admin', () => ({ createSupabaseAdminClient: () => db.client }));
-vi.mock('@/lib/twilio/client', () => ({ twilioRestClient: () => ({ calls: () => ({ update }) }) }));
+vi.mock('@/lib/twilio/client', () => ({ updateTwilioCall: (...args: unknown[]) => update(...args) }));
 
 import { POST } from './route';
 

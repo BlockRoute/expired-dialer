@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export const GET = withApiErrors(async () => {
   await requireUserApi();
   return NextResponse.json(
-    { ok: true, token: voiceToken('daniel') },
+    { ok: true, token: await voiceToken('daniel') },
     { headers: { 'cache-control': 'no-store' } },
   );
 });
