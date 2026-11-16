@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "expired-dialer",
+  // OpenNext build output; leave main/assets as the adapter docs specify.
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": [
+    // Node.js APIs (Buffer, AsyncLocalStorage, ...) used by Next.js and the app.
+    "nodejs_compat",
+    // Adapter default: fetch() to public URLs goes over the public internet.
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+}
