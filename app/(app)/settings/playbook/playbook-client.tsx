@@ -100,6 +100,10 @@ export function PlaybookClient({ cards }: { cards: PlaybookCardRow[] }) {
           <label className="block text-sm">
             Say
             <textarea className={input} rows={3} value={draft.say} onChange={set('say')} />
+            <span className="mt-1 block text-xs text-neutral-500">
+              Fills in per lead: %lead.first_name% %lead.last_name% %lead.city% %lead.list_price%
+              %lead.days_on_market% %cma.range%
+            </span>
           </label>
           <label className="block text-sm">
             Why
